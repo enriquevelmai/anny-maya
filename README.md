@@ -12,9 +12,11 @@ and FBX export.
 [Google GNM](https://github.com/google/GNM) head (the model behind
 [gnm-maya](https://github.com/enriquevelmai/gnm-maya)) and it is aligned to the
 body, stitched watertight at the neck and skinned to the same 104-bone
-skeleton - or import the face you made in gnm-maya. The Face tab's 52 ARKit
-actions drive the GNM head too (built from GNM's own semantic expressions,
-see below), and bake as ARKit-named blendShape targets.
+skeleton - or import the face you made in gnm-maya.
+
+**New in v1.2 - ARKit on the GNM head:** the Face tab's 52 ARKit actions
+drive the GNM head too (built from GNM's own semantic expressions, see
+*ARKit on the GNM head*), and bake as ARKit-named blendShape targets.
 
 ![Anny bodies with GNM heads](docs/preview_head.png)
 
