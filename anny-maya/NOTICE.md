@@ -45,6 +45,22 @@ This project is **not affiliated with, sponsored by, or endorsed by NAVER**
 or the MakeHuman project. "Anny" and "NAVER" are used only to describe the
 model this tool loads (Apache-2.0 grants no trademark rights, §6).
 
+## Google GNM head model (optional; downloaded unmodified when first used)
+
+When the GNM head is first switched on (Head tab), `external/gnm_data/` is
+populated with `gnm/shape/data/versions/v3_0/gnm_head.npz` plus `LICENSE`
+and the READMEs from [google/GNM](https://github.com/google/GNM) at the
+exact commit pinned in `external/GNM_DATA.json`
+(`9c9419f191edd68644ef5cb6572e238248e9a81c`), unmodified.
+
+- **GNM** ("Generative aNthropometric Model") - Copyright 2026 Google LLC,
+  Apache License 2.0 (https://github.com/google/GNM/blob/main/LICENSE).
+  `external/_head.py` evaluates the model's bind pose with numpy following
+  `gnm/shape/gnm_common.py` (a derivative of that Apache-2.0 code) and
+  attaches it to the Anny body.
+
+Not affiliated with, sponsored by, or endorsed by Google.
+
 ## Bundled Python runtime (set up on first run)
 
 On first run, `runtime/` is populated with the module's own Python. On
@@ -58,4 +74,4 @@ Agreement** (also at `runtime/LICENSE.txt` once downloaded). On
 ## In-app license viewer
 
 **Anny ▸ Licenses…** lists this module's license plus every license actually
-installed on your machine (Anny, the CC0 assets, CPython, NumPy).
+installed on your machine (Anny, the CC0 assets, GNM, CPython, NumPy).

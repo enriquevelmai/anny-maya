@@ -1,0 +1,14 @@
+{
+  "repo": "google/GNM",
+  "tag": "v3.0 (main @ 2026-07-15)",
+  "sha": "9c9419f191edd68644ef5cb6572e238248e9a81c",
+  "zip_url": "https://github.com/google/GNM/archive/9c9419f191edd68644ef5cb6572e238248e9a81c.zip",
+  "approx_mb": 40,
+  "extract": [
+    "LICENSE",
+    "README.md",
+    "gnm/shape/README.md",
+    "gnm/shape/data/versions/v3_0/gnm_head.npz"
+  ],
+  "skip": []
+}

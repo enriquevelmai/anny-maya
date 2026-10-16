@@ -78,6 +78,9 @@ def collect():
   cc0 = _read(os.path.join(config.DATA_DIR, "mpfb2", "LICENSE.md"))
   if cc0:
     items.append(("MakeHuman / MPFB2 + Face Units assets (CC0)", cc0))
+  gnm = _read(os.path.join(config.GNM_ROOT, "LICENSE"))
+  if gnm:
+    items.append(("Google GNM head model (Apache-2.0)", gnm))
   rt = _read(os.path.join(_ROOT, "runtime", "LICENSE.txt"))
   if rt:
     items.append(("CPython runtime (PSF)", rt))

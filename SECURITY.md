@@ -16,6 +16,9 @@ the module's own folder):
 - The [naver/anny](https://github.com/naver/anny) repository archive at one
   exact, pinned commit SHA (`external/ANNY_DATA.json`) — only its data
   folder is extracted; none of its code is executed
+- Only if you switch on the GNM head: the [google/GNM](https://github.com/google/GNM)
+  archive at one pinned commit (`external/GNM_DATA.json`); only the model
+  `.npz` (loaded with `allow_pickle=False`) and its license/READMEs are kept
 - Its own updates from this repository (GitHub Releases by default)
 
 `anny.pth` (a PyTorch checkpoint) is read with a restricted unpickler that

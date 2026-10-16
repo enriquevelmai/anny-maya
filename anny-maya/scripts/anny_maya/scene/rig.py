@@ -2,7 +2,8 @@
 
 Produces a new mesh with:
   - a blendShape node with the 52 ARKit facial actions (Anny's Face Units,
-    exact per-vertex deltas) - native, keyframable, mocap-compatible names
+    exact per-vertex deltas) - native, keyframable, mocap-compatible names;
+    with a GNM head: the GNM expression (+ optional GNM expression modes)
   - the 104-bone ``anny`` skeleton as Maya joints (rest orientations from
     Anny's cached Procrustes frames), skinned with Anny's own weights
     (classic linear skinning = Anny's LBS, so poses match the panel exactly)
@@ -59,16 +60,20 @@ class _Node(object):
     return mc.ls(self.uuid, long=True)[0]
 
 
-def bake_rig(body, name=None, face=True, apply_pose=True):
-  """Bake ``body`` (an AnnyBody) into a rigged mesh. Returns the transform."""
+def bake_rig(body, name=None, face=True, apply_pose=True, modes=0):
+  """Bake ``body`` (an AnnyBody) into a rigged mesh. Returns the transform.
+
+  Anny head: ``face`` adds the 52 ARKit targets. GNM head: ``face`` adds
+  the panel's GNM expression as one target (gnmExpression) and ``modes``
+  the first N GNM expression modes of each region."""
   from anny_maya.ui.progress import MayaProgress
 
   worker = body.worker
   topo = body.topology
   state = body.get_state()
-  meta = worker.bake(state)
+  meta = worker.bake(state, modes=modes if (face and state.get("head")) else 0)
   sess = worker.session_dir
-  name = name or (body.transform.split("|")[-1] + "_rig")
+  name = _build.unique_name(name or (body.transform.split("|")[-1] + "_rig"))
   targets = meta["targets"] if face else []
 
   with MayaProgress("Baking Anny rig", maximum=len(targets) + 4) as prog:

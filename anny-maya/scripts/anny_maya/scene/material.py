@@ -12,16 +12,22 @@ from maya import cmds as mc
 
 # mesh part (topology.json part_names) -> material name
 MATERIAL_OF_PART = {"body": "skin", "eye_l": "eyes", "eye_r": "eyes",
-                    "tongue": "tongue"}
+                    "tongue": "tongue",
+                    # GNM head parts (Phase 2)
+                    "gnm_skin": "skin", "gnm_eye_l": "eyes",
+                    "gnm_eye_r": "eyes", "gnm_teeth": "teeth",
+                    "gnm_tongue": "tongue"}
 
 # material -> (RGB, specular, roughness, subsurface)
 _PALETTE = {
     "skin": ((0.80, 0.60, 0.50), 0.25, 0.5, 0.15),
     "eyes": ((0.92, 0.92, 0.94), 0.8, 0.1, 0.0),
     "tongue": ((0.78, 0.40, 0.42), 0.5, 0.3, 0.1),
+    "teeth": ((0.92, 0.88, 0.82), 0.4, 0.3, 0.0),
 }
 
-COMPONENT_GROUPS = {"Eyes": ("eyes",), "Tongue": ("tongue",)}
+COMPONENT_GROUPS = {"Eyes": ("eyes",), "Teeth": ("teeth",),
+                    "Tongue": ("tongue",)}
 
 
 def _standard_surface_available():

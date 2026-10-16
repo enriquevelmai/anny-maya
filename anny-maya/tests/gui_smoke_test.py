@@ -77,6 +77,20 @@ def _main():
   _check("Pose: T-pose preset + bone slider", pose)
   _check("History back/forward", history)
   _check("Animate: Bake Rig", bake)
+
+  def head():
+    from anny_maya.services import bootstrap
+    if not bootstrap.gnm_available():
+      print("  (GNM data not installed - skipping the head check)")
+      return
+    panel.gnm_chk.setChecked(True)
+    assert panel.body.has_gnm_head, "GNM head did not switch on"
+    panel._randomize_gnm("identity")
+    panel._bake_rig()
+    panel.gnm_chk.setChecked(False)
+    assert not panel.body.has_gnm_head
+
+  _check("Head: GNM head on/randomize/bake/off", head)
   _check("Licenses dialog", lambda: anny_maya.show_licenses().close())
 
   # cleanup: everything this test created, then a fresh body in the panel

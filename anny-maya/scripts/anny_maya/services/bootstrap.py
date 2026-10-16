@@ -124,7 +124,7 @@ def _host_python():
 
 
 def _ensure_runtime_windows(status):
-  status("Downloading portable Python %s…" % PY_VER)
+  status("Downloading portable Python %sâ€¦" % PY_VER)
   blob = _download(EMBED_URL)
   os.makedirs(RUNTIME_DIR, exist_ok=True)
   with zipfile.ZipFile(io.BytesIO(blob)) as z:
@@ -132,13 +132,13 @@ def _ensure_runtime_windows(status):
   with open(os.path.join(RUNTIME_DIR, "python311._pth"), "w") as f:
     f.write(_PTH)
   py = runtime_python()
-  status("Installing pip…")
+  status("Installing pipâ€¦")
   get_pip = os.path.join(RUNTIME_DIR, "get-pip.py")
   with open(get_pip, "wb") as f:
     f.write(_download(GET_PIP_URL))
   _run([py, get_pip, "--no-warn-script-location"], "get-pip")
   os.remove(get_pip)
-  status("Installing numpy…")
+  status("Installing numpyâ€¦")
   site = os.path.join(RUNTIME_DIR, "Lib", "site-packages")
   _run([py, "-m", "pip", "install", "--target", site, *CORE_PACKAGES],
        "pip install")
@@ -146,7 +146,7 @@ def _ensure_runtime_windows(status):
 
 def _ensure_runtime_posix(status):
   host = _host_python()
-  status("Creating Python environment (venv)…")
+  status("Creating Python environment (venv)â€¦")
   try:
     _run([host, "-m", "venv", RUNTIME_DIR], "venv creation")
   except RuntimeError as e:
@@ -155,7 +155,7 @@ def _ensure_runtime_posix(status):
         "On Linux, install your distro's python3-venv package and retry.\n\n%s"
         % (host, e))
   py = runtime_python()
-  status("Installing numpy…")
+  status("Installing numpyâ€¦")
   _run([py, "-m", "pip", "install", "--upgrade", "pip"], "pip upgrade")
   _run([py, "-m", "pip", "install", *CORE_PACKAGES], "pip install")
 
@@ -208,23 +208,20 @@ def _wanted(rel, pin):
   return False
 
 
-def ensure_data(status=lambda msg, **kw: None, force=False):
-  """Download the pinned naver/anny commit and extract only the assets the
-  numpy port reads (never smplx/non-commercial content)."""
-  if data_available() and not force:
-    return False
-  pin = pinned()
-  mb = pin.get("approx_mb", 48)
+def _download_pinned(pin, dest_root, sentinel, label, status):
+  """Download ``pin['zip_url']`` (an exact commit), extract only the pinned
+  paths into a temp dir next to ``dest_root``, then swap it in."""
+  mb = pin.get("approx_mb", 40)
 
   def progress(got, total):
-    status("Downloading Anny %s (%s) - %.0f / %s MB…"
-           % (pin.get("tag", ""), pin["sha"][:8], got / 1e6,
+    status("Downloading %s (%s) - %.0f / %s MB…"
+           % (label, pin["sha"][:8], got / 1e6,
               "%.0f" % (total / 1e6) if total else "~%d" % mb), tick=False)
 
-  status("Downloading Anny %s (~%d MB)…" % (pin.get("tag", ""), mb))
+  status("Downloading %s (~%d MB)…" % (label, mb))
   blob = _download(pin["zip_url"], timeout=600, progress=progress)
-  status("Extracting Anny assets…")
-  tmp = tempfile.mkdtemp(prefix="anny_data_", dir=config.EXTERNAL_DIR)
+  status("Extracting %s…" % label)
+  tmp = tempfile.mkdtemp(prefix="_dl_", dir=config.EXTERNAL_DIR)
   try:
     n = 0
     with zipfile.ZipFile(io.BytesIO(blob)) as z:
@@ -242,34 +239,108 @@ def ensure_data(status=lambda msg, **kw: None, force=False):
         with z.open(info) as src, open(dst, "wb") as out:
           shutil.copyfileobj(src, out)
         n += 1
-    if not os.path.isfile(os.path.join(tmp, "src", "anny", "data", "cached",
-                                       "anny.pth")):
-      raise RuntimeError("Downloaded archive does not look like naver/anny.")
-    with open(os.path.join(tmp, "ANNY_DATA.json"), "w") as f:
-      json.dump(pin, f, indent=2)
-    old = config.DATA_ROOT + "_old"
+    if not os.path.isfile(os.path.join(tmp, *sentinel.split("/"))):
+      raise RuntimeError("Downloaded archive does not look like %s." % label)
+    with open(os.path.join(tmp, os.path.basename(pin["_file"])), "w") as f:
+      json.dump({k: v for k, v in pin.items() if k != "_file"}, f, indent=2)
+    old = dest_root + "_old"
     shutil.rmtree(old, ignore_errors=True)
-    if os.path.isdir(config.DATA_ROOT):
-      os.rename(config.DATA_ROOT, old)
-    os.rename(tmp, config.DATA_ROOT)
+    if os.path.isdir(dest_root):
+      os.rename(dest_root, old)
+    os.rename(tmp, dest_root)
     shutil.rmtree(old, ignore_errors=True)
   finally:
     shutil.rmtree(tmp, ignore_errors=True)
-  logger.info("Anny data %s extracted (%d files) to %s", pin["sha"][:8], n,
-              config.DATA_ROOT)
-  try:  # a new data pin needs a fresh model in the worker
+  logger.info("%s %s extracted (%d files) to %s", label, pin["sha"][:8], n,
+              dest_root)
+  try:  # new data needs a fresh worker
     from anny_maya.core import worker
     worker.shutdown_worker()
   except Exception:
     pass
+
+
+def ensure_data(status=lambda msg, **kw: None, force=False):
+  """Download the pinned naver/anny commit and extract only the assets the
+  numpy port reads (never smplx/non-commercial content)."""
+  if data_available() and not force:
+    return False
+  pin = pinned()
+  pin["_file"] = config.PIN_FILE
+  _download_pinned(pin, config.DATA_ROOT, "src/anny/data/cached/anny.pth",
+                   "NAVER Anny %s" % pin.get("tag", ""), status)
   return True
+
+
+# --- Google GNM head (optional, Phase 2) ---------------------------------------
+
+def gnm_pinned():
+  with open(config.GNM_PIN_FILE) as f:
+    d = json.load(f)
+  d["_file"] = config.GNM_PIN_FILE
+  return d
+
+
+def gnm_available():
+  try:
+    with open(os.path.join(config.GNM_ROOT, "GNM_DATA.json")) as f:
+      inst = json.load(f)
+  except Exception:
+    return False
+  return (inst.get("sha") == gnm_pinned()["sha"]
+          and os.path.isfile(config.GNM_NPZ))
+
+
+def ensure_gnm(status=lambda msg, **kw: None, force=False):
+  """Download Google's GNM head model (pinned commit) into the module."""
+  if gnm_available() and not force:
+    return False
+  _download_pinned(gnm_pinned(), config.GNM_ROOT,
+                   "gnm/shape/data/versions/v3_0/gnm_head.npz",
+                   "Google GNM head model", status)
+  return True
+
+
+def ensure_gnm_with_dialog():
+  """Maya-facing: confirm + download GNM behind a progress dialog."""
+  from maya import cmds as mc
+  if gnm_available():
+    return True
+  pin = gnm_pinned()
+  if not mc.about(batch=True):
+    ans = mc.confirmDialog(
+        title="GNM head",
+        message="The GNM head needs Google's GNM model (~%d MB download, "
+                "Apache-2.0, pinned commit %s).\nIt installs inside the "
+                "module folder. Continue?" % (pin.get("approx_mb", 40),
+                                               pin["sha"][:8]),
+        button=["Download", "Cancel"], defaultButton="Download",
+        cancelButton="Cancel", dismissString="Cancel")
+    if ans != "Download":
+      return False
+  from anny_maya.ui.progress import MayaProgress
+  steps = {"n": 0}
+  try:
+    with MayaProgress("GNM head setup", maximum=4) as prog:
+      def status(m, tick=True):
+        if tick:
+          steps["n"] = min(steps["n"] + 1, 3)
+        prog.set(steps["n"], m)
+      ensure_gnm(status=status)
+    return True
+  except Exception as e:
+    logger.exception("GNM download failed")
+    if not mc.about(batch=True):
+      mc.confirmDialog(title="GNM head", icon="critical", button=["OK"],
+                       message="GNM download failed:\n%s" % e)
+    return False
 
 
 def ensure_compiled(status=lambda msg, **kw: None):
   """Compile the assets into the fast-loading .npz (one time, ~20 s)."""
   if compiled_available():
     return False
-  status("Compiling the Anny model (one time, ~20 s)…")
+  status("Compiling the Anny model (one time, ~20 s)â€¦")
   _run([runtime_python(), config.SERVER_SCRIPT, "--compile"],
        "Anny model compilation")
   return True

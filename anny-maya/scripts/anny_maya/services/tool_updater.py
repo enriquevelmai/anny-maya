@@ -50,7 +50,7 @@ _VERSION_FILE = os.path.join(config.MODULE_ROOT, "TOOL_VERSION.json")
 _REPLACE_DIRS = ("scripts", "tests")
 # external/ mixes tool code with the downloaded anny_data/: only loose
 # *.py / *.json files are synced.
-_EXTERNAL_PRESERVE = ("anny_data", "__pycache__")
+_EXTERNAL_PRESERVE = ("anny_data", "gnm_data", "__pycache__")
 # Describe THIS install; the repo copy must never overwrite them.
 _STATE_FILES = ("TOOL_VERSION.json",)
 

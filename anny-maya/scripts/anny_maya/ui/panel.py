@@ -93,6 +93,8 @@ INFO = (
     "proportions). Randomize draws a plausible body.\n"
     "• Body — 250+ local MakeHuman changes by region (-1..1).\n"
     "• Face — the 52 ARKit facial actions (Face Units, 0..1).\n"
+    "• Head — swap in a Google GNM head (identity + expression), stitched "
+    "at the neck and skinned to the same skeleton; import gnm-maya faces.\n"
     "• Pose — per-bone rotations about Maya's world axes at the neutral "
     "pose (Anny's 'local-ref' parameterization) + presets.\n"
     "• Animate — Bake Rig turns the body into joints + skinCluster + 52 "
@@ -138,6 +140,10 @@ class AnnyPanel(QtWidgets.QWidget):
     self._local_sliders = {}
     self._local_frames = []       # (region, frame, labels, built?)
     self._face_sliders = {}
+    self._face_frames = []
+    self._gnm_sliders = {}        # (kind, index) -> ParamSlider
+    self._gnm_fit_sliders = {}    # key -> ParamSlider
+    self._head_built = False
     self._pose_sliders = []       # 3 axis sliders for the selected bone
     self._trans_sliders = []
     self._pose_items = {}         # bone -> QTreeWidgetItem
@@ -250,6 +256,7 @@ class AnnyPanel(QtWidgets.QWidget):
       self.tabs.addTab(self._create_tab(), icons.icon("anny"), "Create")
       self.tabs.addTab(self._body_tab(), icons.icon("body"), "Body")
       self.tabs.addTab(self._face_tab(), icons.icon("face"), "Face")
+      self.tabs.addTab(self._head_tab(), icons.icon("head"), "Head")
       self.tabs.addTab(self._pose_tab(), icons.icon("pose"), "Pose")
       self.tabs.addTab(self._animate_tab(), icons.icon("cube"), "Animate")
 
@@ -511,8 +518,16 @@ class AnnyPanel(QtWidgets.QWidget):
     row.addWidget(self._btn("Reset", "restart", "<b>Reset face</b><br>Neutral "
                             "expression (all units 0).", self._reset_face))
     v.addLayout(row)
+    self.face_note = QtWidgets.QLabel(
+        "This body uses a GNM head: the 52 ARKit actions belong to Anny's own "
+        "head. Shape the GNM face in the Head tab (Expression).")
+    self.face_note.setWordWrap(True)
+    self.face_note.setVisible(False)
+    v.addWidget(self.face_note)
+    self._face_row = row
     for title, labels in self.body.topology.meta["face_groups"]:
       frame = CollapsibleFrame(title, expanded=title in ("Mouth", "Eyes"))
+      self._face_frames.append(frame)
       for lab in labels:
         w = ParamSlider(_camel_words(lab), 0.0, 1.0, 0.0,
                         lambda val, l=lab: self._on_face(l, val),
@@ -523,6 +538,207 @@ class AnnyPanel(QtWidgets.QWidget):
       v.addWidget(frame)
     v.addStretch(1)
     return self._scroll(host)
+
+  # --- Head tab (Google GNM head, Phase 2) ------------------------------------------
+
+  def _head_tab(self):
+    host = QtWidgets.QWidget()
+    v = QtWidgets.QVBoxLayout(host)
+    v.setSpacing(6)
+    self._head_layout = v
+    row = QtWidgets.QHBoxLayout()
+    self.gnm_chk = QtWidgets.QCheckBox("Use GNM head")
+    self.gnm_chk.setToolTip(
+        "<b>GNM head</b><br>Replace Anny's head with a Google GNM head "
+        "(253 identity + 383 expression modes), stitched at the neck and "
+        "skinned to Anny's skeleton. Downloads the GNM model (~40 MB) the "
+        "first time.")
+    self.gnm_chk.toggled.connect(self._on_gnm_toggled)
+    row.addWidget(self.gnm_chk)
+    row.addStretch(1)
+    imp = self._btn("Import from gnm-maya", "download",
+                    "<b>Import face</b><br>Copy identity + expression from "
+                    "a gnm-maya head in the scene (select it first if there "
+                    "are several).", self._import_gnm)
+    row.addWidget(imp)
+    v.addLayout(row)
+    self.head_note = QtWidgets.QLabel(
+        "GNM's sliders are a statistical basis ordered by importance (m0 = "
+        "broadest change), like gnm-maya. The first modes of each region are "
+        "shown; all are scriptable (body.set_gnm).")
+    self.head_note.setWordWrap(True)
+    v.addWidget(self.head_note)
+    self._head_controls = QtWidgets.QWidget()
+    self._head_controls_layout = QtWidgets.QVBoxLayout(self._head_controls)
+    self._head_controls_layout.setContentsMargins(0, 0, 0, 0)
+    v.addWidget(self._head_controls)
+    v.addStretch(1)
+    self._build_head_controls()
+    return self._scroll(host)
+
+  def _build_head_controls(self):
+    """Sliders need the GNM metadata, known once the data is installed."""
+    if self._head_built or not self.body or not self.body.head_topology:
+      return
+    self._head_built = True
+    lay = self._head_controls_layout
+    self.gnm_scale = {}
+    for kind, title, groups, shown, scale in (
+        ("identity", "Identity", self.body.gnm_identity_groups, 12, 1.0),
+        ("expression", "Expression", self.body.gnm_expression_groups, 8,
+         0.5)):
+      frame = CollapsibleFrame(title, expanded=True)
+      row = QtWidgets.QHBoxLayout()
+      row.addWidget(self._btn(
+          "Randomize", "dice", "<b>Randomize %s</b><br>Gaussian values for "
+          "every %s mode, times Amount." % (kind, kind),
+          lambda _=False, k=kind: self._randomize_gnm(k)))
+      spin = QtWidgets.QDoubleSpinBox()
+      spin.setRange(0.0, 3.0)
+      spin.setSingleStep(0.1)
+      spin.setValue(scale)
+      spin.setToolTip("<b>Amount</b><br>Standard deviations for Randomize.")
+      self.gnm_scale[kind] = spin
+      row.addWidget(spin)
+      row.addStretch(1)
+      row.addWidget(self._btn(
+          "Reset", "restart", "<b>Reset %s</b><br>All %s modes to 0 (the "
+          "average)." % (kind, kind),
+          lambda _=False, k=kind: self._reset_gnm(k)))
+      frame.content_layout().addLayout(row)
+      for label, start, end in groups:
+        n = min(shown, end - start + 1)
+        sub = CollapsibleFrame("%s  (%d of %d)" % (label.replace("_", " "),
+                                                   n, end - start + 1),
+                               expanded=label in ("head", "lower_face_region"))
+        for k in range(n):
+          i = start + k
+          w = ParamSlider("m%d" % k, -3.0, 3.0, 0.0,
+                          lambda val, kd=kind, ii=i: self._on_gnm(kd, ii, val),
+                          tooltip="<b>%s m%d</b><br>GNM %s mode #%d (-3..3 "
+                          "standard deviations)." % (label, k, kind, i),
+                          label_width=40, on_release=self._push_history)
+          self._gnm_sliders[(kind, i)] = w
+          sub.content_layout().addWidget(w)
+        frame.content_layout().addWidget(sub)
+      lay.addWidget(frame)
+    fit = CollapsibleFrame("Fit to the body", expanded=False)
+    for label, key, lo, hi, dflt, tip in (
+        ("Scale", "scale", 0.8, 1.25, 1.0,
+         "<b>Scale</b><br>Head size relative to the eye-distance fit."),
+        ("Up/Down", ("offset", 1), -5.0, 5.0, 0.0,
+         "<b>Up/Down</b><br>Move the head along the neck (cm)."),
+        ("Fwd/Back", ("offset", 2), -5.0, 5.0, 0.0,
+         "<b>Forward/Back</b><br>Move the head forward/back (cm)."),
+        ("Pitch", "pitch", -20.0, 20.0, 0.0,
+         "<b>Pitch</b><br>Tilt the head about the eye axis (degrees).")):
+      w = ParamSlider(label, lo, hi, dflt,
+                      lambda val, k=key: self._on_gnm_fit(k, val),
+                      tooltip=tip, label_width=70,
+                      on_release=self._push_history)
+      self._gnm_fit_sliders[key] = w
+      fit.content_layout().addWidget(w)
+    lay.addWidget(fit)
+
+  def _sync_head(self):
+    on = bool(self.body and self.body.has_gnm_head)
+    self.gnm_chk.blockSignals(True)
+    self.gnm_chk.setChecked(on)
+    self.gnm_chk.blockSignals(False)
+    self._head_controls.setEnabled(on)
+    self.face_note.setVisible(on)
+    for f in self._face_frames:
+      f.setEnabled(not on)
+    for i in range(self._face_row.count()):
+      w = self._face_row.itemAt(i).widget()
+      if w is not None:
+        w.setEnabled(not on)
+    if hasattr(self, "bake_modes_spin"):
+      self.bake_modes_spin.setEnabled(on)
+      self.bake_face_chk.setText("GNM expression" if on
+                                 else "52 ARKit face shapes")
+    if not on:
+      return
+    h = self.body.state["head"]
+    for (kind, i), w in self._gnm_sliders.items():
+      w.set_value_silent(h[kind][i])
+    for key, w in self._gnm_fit_sliders.items():
+      fit = h["fit"]
+      w.set_value_silent(fit[key[0]][key[1]] if isinstance(key, tuple)
+                         else fit[key])
+
+  def _on_gnm_toggled(self, on):
+    from anny_maya.services import bootstrap
+    try:
+      self._refresh_timer.stop()
+      if on and not bootstrap.gnm_available():
+        if not bootstrap.ensure_gnm_with_dialog():
+          self._sync_head()
+          return
+      if on and self.body.head_topology is None:
+        # The worker started before GNM was installed: restart it.
+        from anny_maya.core import worker as _worker
+        _worker.shutdown_worker()
+        self.body = AnnyBody.adopt(self.body.transform)
+        self._build_head_controls()
+      self.body.set_gnm_head(on)
+      self._sync_from_body()
+      self._push_history()
+      self.status.setText("GNM head %s." % ("on" if on else "off - Anny's "
+                                             "own head"))
+    except Exception as e:
+      self._sync_head()
+      self._show_error("GNM head toggle failed", e)
+
+  def _on_gnm(self, kind, i, value):
+    try:
+      changed = self.body.set_gnm(kind, i, value,
+                                  symmetry=self.sym_chk.isChecked(),
+                                  update=False)
+      for j in changed:
+        if j != i and (kind, j) in self._gnm_sliders:
+          self._gnm_sliders[(kind, j)].set_value_silent(value)
+      self._schedule_refresh()
+    except Exception as e:
+      self._show_error("GNM edit failed", e)
+
+  def _on_gnm_fit(self, key, value):
+    try:
+      self.body.set_gnm_fit(key, value, update=False)
+      self._schedule_refresh()
+    except Exception as e:
+      self._show_error("Head fit failed", e)
+
+  def _randomize_gnm(self, kind):
+    self._run("Randomize failed", lambda: self.body.randomize_gnm(
+        kind, scale=self.gnm_scale[kind].value(),
+        seed=random.randint(0, 1 << 30),
+        symmetric=self.sym_chk.isChecked()), msg="Randomized GNM %s." % kind)
+
+  def _reset_gnm(self, kind):
+    self._run("Reset failed", lambda: self.body.reset_gnm(kind),
+              msg="GNM %s reset." % kind)
+
+  def _import_gnm(self):
+    from anny_maya.core.body import find_gnm_heads
+    heads = find_gnm_heads(selected_only=True) or find_gnm_heads()
+    if not heads:
+      self._show_error("Import from gnm-maya",
+                       RuntimeError("No gnm-maya head in the scene."))
+      return
+    if not self.body.has_gnm_head:
+      self.gnm_chk.setChecked(True)
+      if not self.body.has_gnm_head:
+        return
+    result = {}
+
+    def go():
+      result["sculpt"] = self.body.import_gnm_head(heads[0])
+    self._run("Import failed", go, msg="Imported the face of %s%s." % (
+        heads[0], ""))
+    if result.get("sculpt"):
+      self.status.setText("Imported %s (its masked sculpt layer is not "
+                          "transferable - coefficients only)." % heads[0])
 
   # --- Pose tab ----------------------------------------------------------------
 
@@ -636,6 +852,15 @@ class AnnyPanel(QtWidgets.QWidget):
                                   "like the panel (otherwise the bind pose).")
     row.addWidget(self.bake_face_chk)
     row.addWidget(self.bake_pose_chk)
+    self.bake_modes_spin = QtWidgets.QSpinBox()
+    self.bake_modes_spin.setRange(0, 10)
+    self.bake_modes_spin.setPrefix("GNM modes/region: ")
+    self.bake_modes_spin.setToolTip(
+        "<b>GNM expression modes</b><br>With a GNM head, also bake the first "
+        "N expression modes of each region as blendShape targets (at +2 "
+        "sigma).")
+    self.bake_modes_spin.setEnabled(False)
+    row.addWidget(self.bake_modes_spin)
     row.addStretch(1)
     row.addWidget(self._btn("Bake Rig", "skeleton", "<b>Bake rig</b><br>"
                             "Create the rigged copy of this body.",
@@ -681,6 +906,7 @@ class AnnyPanel(QtWidgets.QWidget):
     for k, w in self._face_sliders.items():
       w.set_value_silent(s["facial_actions"].get(k, 0.0))
     self._sync_pose()
+    self._sync_head()
 
   def _sync_local(self):
     s = self.body.state["local_changes"]
@@ -887,6 +1113,7 @@ class AnnyPanel(QtWidgets.QWidget):
       self.status.setText("Baking rig…")
       QtWidgets.QApplication.processEvents()
       name = rig.bake_rig(self.body, face=self.bake_face_chk.isChecked(),
+                          modes=self.bake_modes_spin.value(),
                           apply_pose=self.bake_pose_chk.isChecked())
       self._last_rig = name
       self.status.setText("Baked rig: %s" % name)

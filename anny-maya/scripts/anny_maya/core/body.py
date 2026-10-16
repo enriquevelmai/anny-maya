@@ -11,6 +11,9 @@ State (all JSON-friendly, persisted on the mesh transform):
   rotations       {bone label -> [rx, ry, rz]} degrees about Maya world axes
                   at the neutral pose (Anny's local-ref parameterization)
   translation     [x, y, z] cm (root)
+  head            None = Anny's own head; or a Google GNM head (Phase 2):
+                  {"identity": [253], "expression": [383],
+                   "fit": {"scale", "offset" [x,y,z] cm, "pitch" deg}}
 """
 
 from __future__ import annotations
@@ -43,10 +46,27 @@ def find_bodies(selected_only=False):
           and not mc.attributeQuery("annyRig", node=n, exists=True)]
 
 
+GNM_STATE_ATTR = "gnmState"  # gnm-maya's per-head attribute (for import)
+
+
 def default_state():
   return {"phenotypes": {k: 0.5 for k in PHENOTYPES},
           "local_changes": {}, "facial_actions": {}, "rotations": {},
-          "translation": [0.0, 0.0, 0.0]}
+          "translation": [0.0, 0.0, 0.0], "head": None}
+
+
+def default_head(identity_dim=253, expression_dim=383):
+  return {"identity": [0.0] * identity_dim,
+          "expression": [0.0] * expression_dim,
+          "fit": {"scale": 1.0, "offset": [0.0, 0.0, 0.0], "pitch": 0.0}}
+
+
+def find_gnm_heads(selected_only=False):
+  """gnm-maya heads in the scene (transforms carrying gnmState)."""
+  nodes = (mc.ls(selection=True, long=False) if selected_only
+           else mc.ls(type="transform", long=False))
+  return [n for n in (nodes or [])
+          if mc.attributeQuery(GNM_STATE_ATTR, node=n, exists=True)]
 
 
 def _sym_map(pairs):
@@ -84,8 +104,9 @@ class AnnyBody(object):
 
   def _init_common(self):
     self.worker = _worker.get_worker()
-    self.topology = self.worker.topology
-    meta = self.topology.meta
+    self.body_topology = self.worker.topology
+    self.head_topology = self.worker.head_topology
+    meta = self.body_topology.meta
     self.state = default_state()
     self.bone_labels = list(meta["bone_labels"])
     self.local_labels = list(meta["local_labels"])
@@ -93,6 +114,33 @@ class AnnyBody(object):
     self.bone_mirror = _sym_map(meta.get("bone_mirror", []))
     self.local_mirror = _sym_map(meta.get("local_mirror", []))
     self.face_mirror = _sym_map(meta.get("face_mirror", []))
+    hm = meta.get("head") or {}
+    self.gnm_identity_dim = hm.get("identity_dim", 253)
+    self.gnm_expression_dim = hm.get("expression_dim", 383)
+    self.gnm_identity_groups = hm.get("identity_groups", [])
+    self.gnm_expression_groups = hm.get("expression_groups", [])
+    # left_eye_region_k <-> right_eye_region_k (expression symmetry)
+    names = {}
+    for label, start, end in self.gnm_expression_groups:
+      for i in range(start, end + 1):
+        names["%s_%03d" % (label, i - start)] = i
+    self.gnm_expression_mirror = {}
+    for n, i in names.items():
+      if "left" in n and n.replace("left", "right") in names:
+        j = names[n.replace("left", "right")]
+        self.gnm_expression_mirror[i] = j
+        self.gnm_expression_mirror[j] = i
+
+  @property
+  def topology(self):
+    """The mesh topology for the current state (Anny head or GNM head)."""
+    if self.state.get("head") and self.head_topology is not None:
+      return self.head_topology
+    return self.body_topology
+
+  @property
+  def has_gnm_head(self):
+    return bool(self.state.get("head"))
 
   # --- state persistence ---------------------------------------------------
 
@@ -137,6 +185,18 @@ class AnnyBody(object):
                       if k in self.bone_labels and any(float(a) for a in v)}
     s["translation"] = [float(x) for x in
                         (state.get("translation") or [0.0, 0.0, 0.0])]
+    h = state.get("head")
+    if h:
+      d = default_head(self.gnm_identity_dim, self.gnm_expression_dim)
+      for k, n in (("identity", self.gnm_identity_dim),
+                   ("expression", self.gnm_expression_dim)):
+        vals = [float(x) for x in (h.get(k) or [])][:n]
+        d[k][:len(vals)] = vals
+      fit = h.get("fit") or {}
+      d["fit"]["scale"] = float(fit.get("scale", 1.0))
+      d["fit"]["offset"] = [float(x) for x in fit.get("offset", [0, 0, 0])]
+      d["fit"]["pitch"] = float(fit.get("pitch", 0.0))
+      s["head"] = d
     self.state = s
     if update:
       self._update()
@@ -144,7 +204,15 @@ class AnnyBody(object):
   # --- evaluation ----------------------------------------------------------
 
   def _update(self):
+    if self.state.get("head") and self.head_topology is None:
+      raise RuntimeError("The GNM head data is not installed (Head tab > "
+                         "Use GNM head).")
     verts = self.worker.eval(self.state)
+    if mc.objExists(self.transform) and (
+        mc.polyEvaluate(self.transform, vertex=True) != len(verts) // 3):
+      self._rebuild(verts)  # switched between Anny's head and a GNM head
+      self._save_state()
+      return
     if not mc.objExists(self.transform):
       # The user deleted the mesh: self-heal by rebuilding it with the
       # current parameters instead of erroring on every button press.
@@ -156,6 +224,23 @@ class AnnyBody(object):
     else:
       _build.set_points(self.transform, verts)
     self._save_state()
+
+  def _rebuild(self, verts):
+    """Swap the mesh for the other topology, keeping the transform's name,
+    placement and attributes (only the shape node is replaced)."""
+    tmp = _build.build_mesh(self.topology, verts, name="anny_tmp_rebuild")
+    new_shape = mc.listRelatives(tmp, shapes=True, fullPath=True)[0]
+    old_shapes = mc.listRelatives(self.transform, shapes=True,
+                                  fullPath=True) or []
+    if old_shapes:
+      mc.delete(old_shapes)
+    mc.parent(new_shape, self.transform, shape=True, relative=True)
+    mc.delete(tmp)
+    shape = mc.listRelatives(self.transform, shapes=True, fullPath=True)[0]
+    mc.rename(shape, _build.unique_name(self.transform.split("|")[-1]
+                                        + "Shape"))
+    logger.info("Rebuilt '%s' with the %s topology", self.transform,
+                self.topology.kind)
 
   def refresh(self):
     """Re-evaluate and push the mesh (callers stage edits with update=False
@@ -357,9 +442,97 @@ class AnnyBody(object):
       self._update()
 
   def reset_all(self):
+    head = self.state.get("head")
     self.state = default_state()
+    if head:  # keep the GNM head, at its average face
+      self.state["head"] = default_head(self.gnm_identity_dim,
+                                        self.gnm_expression_dim)
     self._update()
     logger.info("Reset all parameters on '%s'", self.transform)
+
+
+  # --- GNM head (Phase 2) ---------------------------------------------------
+
+  def set_gnm_head(self, on, update=True):
+    """Switch between Anny's own head and a Google GNM head."""
+    if on and self.head_topology is None:
+      raise RuntimeError("The GNM head data is not installed.")
+    if on and not self.state.get("head"):
+      self.state["head"] = default_head(self.gnm_identity_dim,
+                                        self.gnm_expression_dim)
+      self.state["facial_actions"] = {}  # ARKit units live on Anny's head
+    elif not on:
+      self.state["head"] = None
+    if update:
+      self._update()
+
+  def set_gnm(self, kind, i, value, symmetry=False, update=True):
+    """Set GNM 'identity' or 'expression' coefficient ``i``; returns the
+    indices changed (expression symmetry mirrors left/right eye modes)."""
+    h = self.state["head"]
+    h[kind][i] = float(value)
+    changed = [i]
+    if symmetry and kind == "expression" and i in self.gnm_expression_mirror:
+      j = self.gnm_expression_mirror[i]
+      h[kind][j] = float(value)
+      changed.append(j)
+    if update:
+      self._update()
+    return changed
+
+  def set_gnm_fit(self, key, value, update=True):
+    """'scale', 'pitch' or ('offset', axis): user correction of the head
+    alignment (offset in Maya cm)."""
+    fit = self.state["head"]["fit"]
+    if isinstance(key, tuple):
+      fit[key[0]][key[1]] = float(value)
+    else:
+      fit[key] = float(value)
+    if update:
+      self._update()
+
+  def randomize_gnm(self, kind, scale=1.0, seed=None, groups=None,
+                    symmetric=False, update=True):
+    """Gaussian GNM coefficients (all, or only the given [label,start,end]
+    groups), like gnm-maya's Randomize."""
+    rng = random.Random(seed)
+    vals = self.state["head"][kind]
+    all_groups = (self.gnm_identity_groups if kind == "identity"
+                  else self.gnm_expression_groups)
+    for _label, start, end in (groups or all_groups):
+      for i in range(start, end + 1):
+        vals[i] = rng.gauss(0.0, 1.0) * scale
+    if symmetric and kind == "expression":
+      for i, j in self.gnm_expression_mirror.items():
+        if i < j:
+          vals[j] = vals[i]
+    if update:
+      self._update()
+
+  def reset_gnm(self, kind, update=True):
+    n = (self.gnm_identity_dim if kind == "identity"
+         else self.gnm_expression_dim)
+    self.state["head"][kind] = [0.0] * n
+    if update:
+      self._update()
+
+  def import_gnm_head(self, transform, update=True):
+    """Copy identity + expression from a gnm-maya head (its gnmState).
+    Returns True if that head also had a masked sculpt layer (not
+    transferable - only the coefficients come across)."""
+    d = json.loads(mc.getAttr("%s.%s" % (transform, GNM_STATE_ATTR)))
+    if not self.state.get("head"):
+      self.set_gnm_head(True, update=False)
+    for k in ("identity", "expression"):
+      vals = [float(x) for x in d.get(k) or []]
+      dst = self.state["head"][k]
+      dst[:] = [0.0] * len(dst)
+      dst[:len(vals)] = vals[:len(dst)]
+    if update:
+      self._update()
+    has_sculpt = (mc.attributeQuery("gnmSculpt", node=transform, exists=True)
+                  and mc.getAttr("%s.gnmSculpt" % transform))
+    return bool(has_sculpt)
 
 
 # --- convenience one-shots (no persistent controller) ----------------------

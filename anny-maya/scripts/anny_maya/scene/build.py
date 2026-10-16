@@ -25,11 +25,10 @@ def build_mesh(topology, verts_flat, name="anny_body", materials=True):
 
   Returns the transform name.
   """
-  nf = topology.num_faces
-  k = topology.verts_per_face
   points = _points(verts_flat)
-  poly_counts = om2.MIntArray(nf, k)
+  poly_counts = om2.MIntArray(list(topology.counts))
   poly_connects = om2.MIntArray(list(topology.faces))
+  nfv = len(topology.faces)
 
   fn = om2.MFnMesh()
   fn.create(points, poly_counts, poly_connects)
@@ -39,25 +38,37 @@ def build_mesh(topology, verts_flat, name="anny_body", materials=True):
   us = om2.MFloatArray(list(uv[0::2]))
   vs = om2.MFloatArray(list(uv[1::2]))
   fn.setUVs(us, vs)
-  fn.assignUVs(poly_counts, om2.MIntArray(list(range(nf * k))))
+  fn.assignUVs(poly_counts, om2.MIntArray(list(range(nfv))))
 
+  # Rename through the API on the node handles: short names may repeat in
+  # the DAG (e.g. several baked rigs), so string lookups could be ambiguous.
   shape_path = fn.getPath()
+  shape_obj = shape_path.node()
   shape_path.pop()
-  transform = om2.MFnDagNode(shape_path.node()).name()
-  transform = mc.rename(transform, name)
-  shape = (mc.listRelatives(transform, shapes=True) or [None])[0]
-  if shape:
-    mc.rename(shape, transform.split("|")[-1] + "Shape")
+  xform_fn = om2.MFnDagNode(shape_path.node())
+  leaf = xform_fn.setName(unique_name(name))
+  om2.MFnDagNode(shape_obj).setName(leaf + "Shape")
+  transform = xform_fn.fullPathName()
 
   if materials:
     assign_materials(transform, topology)
   mc.polySoftEdge(transform, angle=180, constructionHistory=False)
   mc.select(transform, replace=True)
-  return transform
+  return mc.ls(transform)[0]  # shortest unique name
+
+
+def unique_name(name):
+  """``name`` if no node is called that yet, else name1, name2..."""
+  if not mc.objExists(name):
+    return name
+  k = 1
+  while mc.objExists("%s%d" % (name, k)):
+    k += 1
+  return "%s%d" % (name, k)
 
 
 def assign_materials(transform, topology):
-  parts = topology.meta["part_names"]
+  parts = topology.part_names
   by_part = {}
   for i, p in enumerate(topology.face_parts):
     by_part.setdefault(parts[p], []).append(i)

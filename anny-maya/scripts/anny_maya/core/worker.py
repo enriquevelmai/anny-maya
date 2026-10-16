@@ -46,7 +46,8 @@ class AnnyWorker(object):
     if not line.startswith("READY"):
       raise RuntimeError("Anny server failed to start:\n%s\n%s"
                          % (line, self.server_log()))
-    self.topology = meshio.read_topology(self.session_dir)
+    self.topology, self.head_topology = meshio.read_topology(
+        self.session_dir)
 
   def server_log(self, tail=1500):
     try:
@@ -75,7 +76,7 @@ class AnnyWorker(object):
   def _state_req(state):
     req = {}
     for k in ("phenotypes", "local_changes", "facial_actions", "rotations",
-              "translation"):
+              "translation", "head"):
       v = state.get(k)
       if v:
         req[k] = v
@@ -91,11 +92,13 @@ class AnnyWorker(object):
     self._request(req, "OK")
     return meshio.read_vertices(out)
 
-  def bake(self, state):
+  def bake(self, state, modes=0):
     """Write rig data (bind mesh, face targets, weights, joints) into the
-    session dir; returns the parsed rig.json."""
+    session dir; returns the parsed rig.json. ``modes``: with a GNM head,
+    also bake the first N expression modes of each region as targets."""
     req = self._state_req(state)
     req["cmd"] = "bake"
+    req["modes"] = int(modes)
     self._request(req, "BAKED")
     with open(os.path.join(self.session_dir, "rig.json")) as f:
       return json.load(f)

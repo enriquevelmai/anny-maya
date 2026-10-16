@@ -216,6 +216,8 @@ def _run():
     else:
       raise
 
+  _head_checks(body, name)
+
   from anny_maya.ui import licenses
   titles = [t for t, _ in licenses.collect()]
   assert any("CC0" in t for t in titles) and any("Anny" in t for t in titles)
@@ -233,7 +235,7 @@ def _run():
     from anny_maya.ui import panel as ui
     body.reset_all()
     p = ui.AnnyPanel(parent=None, adopt_transform=name)
-    assert p.tabs.count() == 5, "panel tabs: %d" % p.tabs.count()
+    assert p.tabs.count() == 6, "panel tabs: %d" % p.tabs.count()
     p._randomize_body()
     assert p.body.state["phenotypes"] != {k: 0.5 for k in
                                           p.body.state["phenotypes"]}
@@ -262,9 +264,22 @@ def _run():
     assert p.body.state["rotations"]["head"][1] == 25.0
     p._reset_all()
     assert not p.body.state["rotations"] and not p.body.state["facial_actions"]
+    if p.body.head_topology is not None:  # Head tab (GNM)
+      p.gnm_chk.setChecked(True)
+      assert p.body.has_gnm_head and not p._face_frames[0].isEnabled()
+      p._gnm_sliders[("identity", 0)].spin.setValue(1.5)
+      assert p.body.state["head"]["identity"][0] == 1.5
+      p._gnm_sliders[("expression", 0)].spin.setValue(1.0)
+      assert p.body.state["head"]["expression"][100] == 1.0,           "symmetry did not mirror the left/right eye expression mode"
+      p._gnm_fit_sliders["scale"].spin.setValue(1.1)
+      p._randomize_gnm("identity")
+      p.gnm_chk.setChecked(False)
+      assert not p.body.has_gnm_head and p._face_frames[0].isEnabled()
+      print("[ok] Head tab: GNM toggle, identity/expression/fit sliders, "
+            "symmetry, randomize")
     p.close()
     p.deleteLater()
-    print("[ok] AnnyPanel builds headlessly (5 tabs; randomize, filter, "
+    print("[ok] AnnyPanel builds headlessly (6 tabs; randomize, filter, "
           "expression, pose preset, bone sliders, history %d steps, reset)"
           % n_hist)
   except ImportError:
@@ -272,6 +287,79 @@ def _run():
 
   worker.shutdown_worker()
   print("SMOKE TEST PASSED")
+
+
+def _boundary_vertices(name):
+  import maya.api.OpenMaya as om2
+  sel = om2.MSelectionList()
+  sel.add(name)
+  it = om2.MItMeshEdge(sel.getDagPath(0))
+  out = set()
+  while not it.isDone():
+    if it.onBoundary():
+      out.add(it.vertexId(0))
+      out.add(it.vertexId(1))
+    it.next()
+  return out
+
+
+def _head_checks(body, name):
+  """Phase 2: GNM head on the Anny body (skipped without GNM data)."""
+  import json
+  import time
+  from maya import cmds as mc
+  from anny_maya.services import bootstrap
+  from anny_maya.scene import rig
+  if not bootstrap.gnm_available() or body.head_topology is None:
+    print("[skip] GNM head data not installed (build_module.py --gnm)")
+    return
+  body.reset_all()
+  body.reset_pose()
+  t = time.time()
+  body.set_gnm_head(True)
+  ht = body.head_topology
+  nb = ht.meta["head"]["body_vertices"]
+  assert mc.polyEvaluate(name, vertex=True) == ht.num_vertices
+  print("[ok] GNM head on: %d verts (%d body + %d GNM) in %.2fs"
+        % (ht.num_vertices, nb, ht.num_vertices - nb, time.time() - t))
+  border = _boundary_vertices(name)
+  assert not any(v < nb for v in border),       "the body has open borders: the neck seam is not closed"
+  print("[ok] neck seam closed: no open border on the body side "
+        "(%d border verts inside GNM's eyes/mouth)" % len(border))
+  before = _pts(name)
+  body.randomize_gnm("identity", seed=4)
+  after = _pts(name)
+  body_moved = max(abs(a - b) for a, b in zip(before[:3 * nb], after[:3 * nb]))
+  head_moved = max(abs(a - b) for a, b in zip(before[3 * nb:], after[3 * nb:]))
+  assert body_moved < 1e-6 and head_moved > 0.1, (body_moved, head_moved)
+  print("[ok] GNM identity moves the head (%.2f cm), body untouched" %
+        head_moved)
+  body.randomize_gnm("expression", scale=0.5, seed=2)
+  body.set_rotation("head", 1, 35.0)
+  body.set_rotation("neck02", 0, 15.0)
+  body.set_gnm_fit("scale", 1.05)
+  rigged = rig.bake_rig(body, modes=1)
+  info = rig.rig_info(rigged)
+  aliases = mc.aliasAttr(info["blendShape"], query=True)[::2]
+  assert "gnmExpression" in aliases and "lower_face_region_000" in aliases
+  err = _max_diff(_pts(rigged), _pts(name))
+  assert err < 1e-2, "GNM-head rig deviates by %.4f cm" % err
+  print("[ok] GNM-head rig (one skinCluster, %d face targets) matches the "
+        "panel: max |err| = %.2e cm" % (len(aliases), err))
+  fake = mc.createNode("transform", name="gnm_head_fake")
+  mc.addAttr(fake, longName="gnmState", dataType="string")
+  ident = [0.0] * 253
+  ident[0] = 2.0
+  mc.setAttr(fake + ".gnmState", json.dumps(
+      {"identity": ident, "expression": [0.0] * 383,
+       "rotations": [[0, 0, 0]] * 4, "translation": [0, 0, 0]}),
+      type="string")
+  body.import_gnm_head(fake)
+  assert body.state["head"]["identity"][0] == 2.0
+  print("[ok] import from a gnm-maya head (gnmState)")
+  body.set_gnm_head(False)
+  assert mc.polyEvaluate(name, vertex=True) == body.body_topology.num_vertices
+  print("[ok] GNM head off: back to Anny's own head")
 
 
 if __name__ == "__main__":

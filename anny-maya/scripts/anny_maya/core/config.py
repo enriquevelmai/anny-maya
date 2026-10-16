@@ -19,6 +19,11 @@ SERVER_SCRIPT = os.path.join(EXTERNAL_DIR, "server.py")
 DATA_ROOT = os.path.join(EXTERNAL_DIR, "anny_data")
 DATA_DIR = os.path.join(DATA_ROOT, "src", "anny", "data")
 PIN_FILE = os.path.join(EXTERNAL_DIR, "ANNY_DATA.json")
+# Google GNM head (optional, downloaded when the GNM head is first enabled).
+GNM_ROOT = os.path.join(EXTERNAL_DIR, "gnm_data")
+GNM_PIN_FILE = os.path.join(EXTERNAL_DIR, "GNM_DATA.json")
+GNM_NPZ = os.path.join(GNM_ROOT, "gnm", "shape", "data", "versions", "v3_0",
+                       "gnm_head.npz")
 
 
 def runtime_python() -> str:
