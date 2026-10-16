@@ -1,0 +1,2 @@
+# (No LFS patterns: everything heavy is downloaded at first run, never
+# committed - see anny-maya/scripts/anny_maya/services/bootstrap.py.)
