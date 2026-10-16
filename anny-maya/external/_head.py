@@ -534,11 +534,14 @@ def apply_similarity(sim, gnm_points):
 
 class HeadAttachment(object):
 
-  def __init__(self, anny, gnm, compiled):
+  def __init__(self, anny, gnm, compiled, arkit=None):
     """``gnm``: a GNMModel, or a zero-arg callable returning one (loaded on
-    first use - the bases are ~140 MB, only needed once a head is shown)."""
+    first use - the bases are ~140 MB, only needed once a head is shown).
+    ``arkit``: an _arkit.ArkitDeltas or a zero-arg callable returning one
+    (the 52 ARKit facial actions on the GNM head), or None."""
     self.anny = anny
     self._gnm = gnm
+    self._arkit = arkit
     c = compiled
     self.anny_used = c["anny_used"]
     self.gnm_used = c["gnm_used"]
@@ -563,12 +566,41 @@ class HeadAttachment(object):
       self._gnm = self._gnm()
     return self._gnm
 
+  @property
+  def arkit(self):
+    if callable(self._arkit):
+      self._arkit = self._arkit()
+    return self._arkit
+
   def head_vertices(self, rest_v, rest_p, identity=None, expression=None,
-                    fit=None):
-    """Aligned + neck-conformed GNM vertices (Anny rest frame, all V_gnm)."""
-    gv, gj = self.gnm.bind(identity, expression)
+                    fit=None, face=None):
+    """Aligned + neck-conformed GNM vertices (Anny rest frame, all V_gnm).
+    ``face``: {ARKit name: weight}, added to GNM's bind pose.
+
+    The neck conform is computed on the neutral face (identity only) and
+    added as is, so expressions and ARKit actions stay exactly linear: a
+    baked blendShape target reproduces the slider (jawOpen moves the chin,
+    which the conform's blend span would otherwise follow)."""
+    gv0, gj = self.gnm.bind(identity, None)
+    gv = gv0
+    if expression is not None and any(expression):
+      gv, _gj = self.gnm.bind(identity, expression)
+    if face and any(face.values()):
+      if self.arkit is None:
+        raise RuntimeError("ARKit shapes for the GNM head are unavailable "
+                           "(Head tab > Use GNM head reinstalls them).")
+      d = self.arkit.delta(face)
+      if d is not None:
+        gv = gv + d
     sim = similarity(self.anny, rest_v, rest_p, gv, gj, fit)
     G = apply_similarity(sim, gv)
+    G0 = G if gv is gv0 else apply_similarity(sim, gv0)
+    G[self.conform_v] += self._conform(rest_v, rest_p, G0)
+    return G
+
+  def _conform(self, rest_v, rest_p, G):
+    """Displacement of the conform vertices that lands GNM's cut ring on
+    Anny's loop above the cut, fading up the neck."""
     frame = _Frame(rest_p[self._neck[0], :3, 3], rest_p[self._neck[1], :3, 3])
     # target: Anny's loop just above the cut, at each L_G vertex's angle
     target_pts = rest_v[self.loop_a1]
@@ -594,12 +626,11 @@ class HeadAttachment(object):
     ang = frame.angle(G[cv])
     span_v = span_f + (span_b - span_f) * 0.5 * (1.0 - np.cos(ang))
     t = np.clip((h0 + span_v - h) / span_v, 0.0, 1.0)
-    G[cv] += (t * t * (3 - 2 * t))[:, None] * dv
-    return G
+    return (t * t * (3 - 2 * t))[:, None] * dv
 
   def rest_vertices(self, rest_v, rest_p, identity=None, expression=None,
-                    fit=None):
-    G = self.head_vertices(rest_v, rest_p, identity, expression, fit)
+                    fit=None, face=None):
+    G = self.head_vertices(rest_v, rest_p, identity, expression, fit, face)
     return np.concatenate([rest_v[self.anny_used], G[self.gnm_used]])
 
   def skin(self, rest_combined, bone_transforms):
@@ -628,21 +659,34 @@ def load_head_compiled(path):
   return d
 
 
-def ensure_head(anny, gnm_npz, cache_dir, log=None):
+def ensure_head(anny, gnm_npz, cache_dir, log=None, arkit=None):
   """HeadAttachment for this install (topology compiled once and cached;
-  the GNM bases themselves load lazily)."""
+  the GNM bases themselves load lazily). ``arkit(gnm_loader)`` returns the
+  ARKit deltas (called lazily, on the first facial action)."""
   path = os.path.join(cache_dir, HEAD_COMPILED_NAME)
+  holder = {}
+
+  def gnm_loader():
+    if "gnm" not in holder:
+      holder["gnm"] = GNMModel(gnm_npz)
+    return holder["gnm"]
+
+  def arkit_loader():
+    return arkit(lambda: head.gnm) if arkit else None
+
+  compiled = None
   if os.path.isfile(path):
     try:
-      return HeadAttachment(anny, lambda: GNMModel(gnm_npz),
-                            load_head_compiled(path))
+      compiled = load_head_compiled(path)
     except Exception:
-      pass
-  if log:
-    log("Compiling the GNM head attachment (one time)...")
-  gnm = GNMModel(gnm_npz)
-  save_head_compiled(compile_attachment(anny, gnm), path)
-  return HeadAttachment(anny, gnm, load_head_compiled(path))
+      compiled = None
+  if compiled is None:
+    if log:
+      log("Compiling the GNM head attachment (one time)...")
+    save_head_compiled(compile_attachment(anny, gnm_loader()), path)
+    compiled = load_head_compiled(path)
+  head = HeadAttachment(anny, gnm_loader, compiled, arkit_loader)
+  return head
 
 
 def gnm_names(gnm_npz):

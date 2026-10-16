@@ -38,6 +38,7 @@ sys.path.insert(0, HERE)
 import numpy as np  # noqa: E402
 
 import _anny_core as core  # noqa: E402
+import _arkit  # noqa: E402
 import _head  # noqa: E402
 
 DATA_ROOT = os.path.join(HERE, "anny_data")
@@ -171,6 +172,7 @@ def export_head_topology(head, session):
       "expression_dim": len(expr),
       "identity_groups": _head.group_ranges(ident),
       "expression_groups": _head.group_ranges(expr),
+      "arkit": bool(_arkit.decoder_available(GNM_ROOT)),
       "gnm": _pin(os.path.join(GNM_ROOT, "GNM_DATA.json")),
   }
 
@@ -212,11 +214,16 @@ class Evaluator(object):
                                             / core.MAYA_SCALE)).tolist()
     return fit
 
+  @staticmethod
+  def face(req):
+    return {k: float(v) for k, v in (req.get("facial_actions") or {}).items()
+            if v}
+
   def coeffs(self, req):
     m = self.model
-    face = {k: v for k, v in (req.get("facial_actions") or {}).items() if v}
+    face = self.face(req)
     if req.get("head"):
-      face = {}  # Anny's own face units only exist on the hidden head
+      face = {}  # on a GNM head the ARKit actions drive GNM (see _arkit)
     return m.coefficients(req.get("phenotypes") or {},
                           req.get("local_changes") or {}, face)
 
@@ -249,7 +256,8 @@ class Evaluator(object):
       verts = m.skin(rest_v, tr)
     else:
       rest = self.head.rest_vertices(rest_v, rest_p, h.get("identity"),
-                                     h.get("expression"), self.head_fit(h))
+                                     h.get("expression"), self.head_fit(h),
+                                     self.face(req))
       verts = self.head.skin(rest, tr)
     return core.to_maya(verts, lift), poses, lift
 
@@ -283,15 +291,23 @@ class Evaluator(object):
             session, k, m.blend_vertices(ones, [m.face_offset + k]), lab,
             face_vals.get(lab, 0.0)))
     else:
-      # Neutral GNM expression in the bind mesh; the panel's expression as
-      # one target, plus the first N modes of each expression region.
+      # Neutral GNM expression in the bind mesh; the 52 ARKit actions on the
+      # GNM head, the panel's GNM expression as one target, plus the first
+      # N modes of each expression region.
       hd, fit, ident = self.head, self.head_fit(h), h.get("identity")
       expr = list(h.get("expression") or [])
       rest = hd.rest_vertices(rest_v, rest_p, ident, None, fit)
       weights = hd.weights
+      if hd.arkit is not None:
+        for lab in core.FACIAL_ACTION_LABELS:
+          shape = hd.rest_vertices(rest_v, rest_p, ident, None, fit,
+                                   {lab: 1.0})
+          targets.append(self._write_target(session, len(targets),
+                                            shape - rest, lab,
+                                            face_vals.get(lab, 0.0)))
       if any(expr):
         cur = hd.rest_vertices(rest_v, rest_p, ident, expr, fit)
-        targets.append(self._write_target(session, 0, cur - rest,
+        targets.append(self._write_target(session, len(targets), cur - rest,
                                           "gnmExpression", 1.0))
       n = int(req.get("modes", 0))
       if n > 0:
@@ -388,6 +404,16 @@ def _euler_xyz(r):
   return np.array([x, y, z])
 
 
+def _arkit_loader(gnm_loader):
+  """The GNM head's ARKit deltas (compiled once; None without h5py or the
+  decoder, e.g. an install from before they were part of the GNM data)."""
+  if not _arkit.decoder_available(GNM_ROOT):
+    _log("ARKit shapes for the GNM head need h5py + GNM's expression decoder.")
+    return None
+  return _arkit.ensure_arkit(gnm_loader, GNM_ROOT, core.FACIAL_ACTION_LABELS,
+                             log=_log)
+
+
 def main():
   p = argparse.ArgumentParser()
   p.add_argument("--session", help="Dir for topology + meshes.")
@@ -408,7 +434,8 @@ def main():
   head = None
   if os.path.isfile(GNM_NPZ):
     try:
-      head = _head.ensure_head(model, GNM_NPZ, GNM_ROOT, log=_log)
+      head = _head.ensure_head(model, GNM_NPZ, GNM_ROOT, log=_log,
+                               arkit=_arkit_loader)
     except Exception:
       import traceback
       traceback.print_exc(file=sys.stderr)

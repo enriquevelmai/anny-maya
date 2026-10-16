@@ -8,7 +8,8 @@
     "LICENSE",
     "README.md",
     "gnm/shape/README.md",
-    "gnm/shape/data/versions/v3_0/gnm_head.npz"
+    "gnm/shape/data/versions/v3_0/gnm_head.npz",
+    "gnm/shape/data/semantic_sampler/expression_decoder_model.h5"
   ],
   "skip": []
 }

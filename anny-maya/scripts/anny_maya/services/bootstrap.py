@@ -124,7 +124,7 @@ def _host_python():
 
 
 def _ensure_runtime_windows(status):
-  status("Downloading portable Python %sâ€¦" % PY_VER)
+  status("Downloading portable Python %s…" % PY_VER)
   blob = _download(EMBED_URL)
   os.makedirs(RUNTIME_DIR, exist_ok=True)
   with zipfile.ZipFile(io.BytesIO(blob)) as z:
@@ -132,13 +132,13 @@ def _ensure_runtime_windows(status):
   with open(os.path.join(RUNTIME_DIR, "python311._pth"), "w") as f:
     f.write(_PTH)
   py = runtime_python()
-  status("Installing pipâ€¦")
+  status("Installing pip…")
   get_pip = os.path.join(RUNTIME_DIR, "get-pip.py")
   with open(get_pip, "wb") as f:
     f.write(_download(GET_PIP_URL))
   _run([py, get_pip, "--no-warn-script-location"], "get-pip")
   os.remove(get_pip)
-  status("Installing numpyâ€¦")
+  status("Installing numpy…")
   site = os.path.join(RUNTIME_DIR, "Lib", "site-packages")
   _run([py, "-m", "pip", "install", "--target", site, *CORE_PACKAGES],
        "pip install")
@@ -146,7 +146,7 @@ def _ensure_runtime_windows(status):
 
 def _ensure_runtime_posix(status):
   host = _host_python()
-  status("Creating Python environment (venv)â€¦")
+  status("Creating Python environment (venv)…")
   try:
     _run([host, "-m", "venv", RUNTIME_DIR], "venv creation")
   except RuntimeError as e:
@@ -155,7 +155,7 @@ def _ensure_runtime_posix(status):
         "On Linux, install your distro's python3-venv package and retry.\n\n%s"
         % (host, e))
   py = runtime_python()
-  status("Installing numpyâ€¦")
+  status("Installing numpy…")
   _run([py, "-m", "pip", "install", "--upgrade", "pip"], "pip upgrade")
   _run([py, "-m", "pip", "install", *CORE_PACKAGES], "pip install")
 
@@ -288,32 +288,69 @@ def gnm_available():
   except Exception:
     return False
   return (inst.get("sha") == gnm_pinned()["sha"]
-          and os.path.isfile(config.GNM_NPZ))
+          and os.path.isfile(config.GNM_NPZ)
+          and os.path.isfile(config.GNM_DECODER))
+
+
+# Only the GNM head needs these (a one-time read of GNM's Keras decoder for
+# the head's ARKit shapes); h5py's only dependency is numpy, already there.
+GNM_PACKAGES = ["h5py"]
+
+
+def gnm_runtime_available():
+  return any(os.path.isdir(os.path.join(d, "h5py"))
+             for d in site_packages_dirs())
+
+
+def ensure_gnm_runtime(status=lambda msg, **kw: None):
+  """Add h5py to the module's runtime (GNM head only)."""
+  if gnm_runtime_available():
+    return False
+  status("Installing h5py…")
+  py = runtime_python()
+  if IS_WINDOWS:
+    site = os.path.join(RUNTIME_DIR, "Lib", "site-packages")
+    _run([py, "-m", "pip", "install", "--no-deps", "--target", site,
+          *GNM_PACKAGES], "pip install h5py")
+  else:
+    _run([py, "-m", "pip", "install", *GNM_PACKAGES], "pip install h5py")
+  try:  # the running worker cannot see the new package
+    from anny_maya.core import worker
+    worker.shutdown_worker()
+  except Exception:
+    pass
+  return True
+
+
+def gnm_ready():
+  return gnm_available() and gnm_runtime_available()
 
 
 def ensure_gnm(status=lambda msg, **kw: None, force=False):
-  """Download Google's GNM head model (pinned commit) into the module."""
-  if gnm_available() and not force:
-    return False
-  _download_pinned(gnm_pinned(), config.GNM_ROOT,
-                   "gnm/shape/data/versions/v3_0/gnm_head.npz",
-                   "Google GNM head model", status)
-  return True
+  """Download Google's GNM head model (pinned commit) into the module,
+  plus h5py in the runtime."""
+  done = False
+  if force or not gnm_available():
+    _download_pinned(gnm_pinned(), config.GNM_ROOT,
+                     "gnm/shape/data/versions/v3_0/gnm_head.npz",
+                     "Google GNM head model", status)
+    done = True
+  return ensure_gnm_runtime(status) or done
 
 
 def ensure_gnm_with_dialog():
   """Maya-facing: confirm + download GNM behind a progress dialog."""
   from maya import cmds as mc
-  if gnm_available():
+  if gnm_ready():
     return True
   pin = gnm_pinned()
   if not mc.about(batch=True):
     ans = mc.confirmDialog(
         title="GNM head",
         message="The GNM head needs Google's GNM model (~%d MB download, "
-                "Apache-2.0, pinned commit %s).\nIt installs inside the "
-                "module folder. Continue?" % (pin.get("approx_mb", 40),
-                                               pin["sha"][:8]),
+                "Apache-2.0, pinned commit %s) and the h5py package "
+                "(~3 MB).\nBoth install inside the module folder. "
+                "Continue?" % (pin.get("approx_mb", 40), pin["sha"][:8]),
         button=["Download", "Cancel"], defaultButton="Download",
         cancelButton="Cancel", dismissString="Cancel")
     if ans != "Download":
@@ -321,10 +358,10 @@ def ensure_gnm_with_dialog():
   from anny_maya.ui.progress import MayaProgress
   steps = {"n": 0}
   try:
-    with MayaProgress("GNM head setup", maximum=4) as prog:
+    with MayaProgress("GNM head setup", maximum=5) as prog:
       def status(m, tick=True):
         if tick:
-          steps["n"] = min(steps["n"] + 1, 3)
+          steps["n"] = min(steps["n"] + 1, 4)
         prog.set(steps["n"], m)
       ensure_gnm(status=status)
     return True
@@ -340,7 +377,7 @@ def ensure_compiled(status=lambda msg, **kw: None):
   """Compile the assets into the fast-loading .npz (one time, ~20 s)."""
   if compiled_available():
     return False
-  status("Compiling the Anny model (one time, ~20 s)â€¦")
+  status("Compiling the Anny model (one time, ~20 s)…")
   _run([runtime_python(), config.SERVER_SCRIPT, "--compile"],
        "Anny model compilation")
   return True

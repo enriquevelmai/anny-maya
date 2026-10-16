@@ -12,9 +12,13 @@ and FBX export.
 [Google GNM](https://github.com/google/GNM) head (the model behind
 [gnm-maya](https://github.com/enriquevelmai/gnm-maya)) and it is aligned to the
 body, stitched watertight at the neck and skinned to the same 104-bone
-skeleton - or import the face you made in gnm-maya.
+skeleton - or import the face you made in gnm-maya. The Face tab's 52 ARKit
+actions drive the GNM head too (built from GNM's own semantic expressions,
+see below), and bake as ARKit-named blendShape targets.
 
 ![Anny bodies with GNM heads](https://raw.githubusercontent.com/enriquevelmai/anny-maya/main/docs/preview_head.png)
+
+![ARKit facial actions on a GNM head: neutral, smile, surprise, anger, pucker, tongue out](https://raw.githubusercontent.com/enriquevelmai/anny-maya/main/docs/preview_arkit.png)
 
 Anny ([paper](https://arxiv.org/abs/2511.03589)) is built on the CC0
 MakeHuman/MPFB2 assets: phenotypes (gender, age, muscle, weight, height,
@@ -89,7 +93,8 @@ reset it. Tabs:
   (head, nose, mouth, torso, arms, legs, measurements…), with a **filter**
   box and per-region **Randomize/Reset** (amount adjustable).
 - **Head** — **Use GNM head** swaps Anny's head for a Google GNM head
-  (downloaded once, ~40 MB, pinned commit): identity sliders (head / eyes
+  (downloaded once, ~40 MB, pinned commit, plus h5py in the module's
+  runtime): identity sliders (head / eyes
   / teeth, first 12 modes each) and expression sliders (eye regions, lower
   face, tongue, pupils) with Randomize and Amount, **Import from gnm-maya**
   (copies the identity + expression of a gnm-maya head in the scene), and
@@ -98,7 +103,8 @@ reset it. Tabs:
 - **Face** — the 52 **ARKit facial actions** (eyeBlinkLeft, jawOpen,
   mouthSmileLeft…, 0…1) grouped by brows / eyes / cheeks & nose / jaw /
   mouth / tongue, plus quick expressions (Smile, Surprise, Anger, Sadness,
-  Blink, Open mouth) and Randomize.
+  Blink, Open mouth) and Randomize. They act on Anny's head or, when it is
+  on, on the GNM head.
 - **Pose** — the 104-bone `anny` rig as a bone tree; rotate the selected
   bone about Maya's world X/Y/Z axes at the neutral pose (Anny's
   `local-ref` parameterization), root position, **Neutral / T-Pose / Arms
@@ -108,9 +114,10 @@ reset it. Tabs:
   frames), a skinCluster with Anny's own weights (classic linear = Anny's
   LBS, so it matches the panel to ~1e-5 cm) and a blendShape with the 52
   ARKit targets, posed and expressed like the panel. With a GNM head: one
-  mesh, one skinCluster, and blendShape targets for the current GNM
-  expression (`gnmExpression`) plus, optionally, the first N GNM
-  expression modes of each region. No Anny runtime needed.
+  mesh, one skinCluster, the 52 ARKit targets built on the GNM head (same
+  names), a target for the current GNM expression (`gnmExpression`) plus,
+  optionally, the first N GNM expression modes of each region. No Anny
+  runtime needed.
   **Export Rig (FBX)…**, **Static Copy**, and rig tools (bind pose, copy the
   panel pose onto a rig).
 
@@ -171,7 +178,8 @@ parameter family, bakes a rig and checks the rig reproduces the worker's
 mesh (max error 1.5e-5 cm, float32), exports FBX and builds the real panel
 headlessly; with GNM data installed it also switches the GNM head on/off,
 checks the neck seam is closed, that GNM identity moves only the head, that
-the GNM-head rig matches the panel (1.5e-5 cm) and the gnm-maya import —
+ARKit actions move the GNM head and not the body, that the GNM-head rig
+(with its 52 ARKit targets) matches the panel and the gnm-maya import —
 passing on Maya 2022, 2024, 2025, 2026 and 2027.
 
 ## How the GNM head is attached (v1.1)
@@ -203,10 +211,42 @@ GNM's model file is fetched from the google/GNM GitHub commit pinned in
 transfer 1:1). Newer google/GNM commits host the weights on Hugging Face
 behind a login, so they are not used.
 
-Limits: the ARKit Face tab drives Anny's own head only (a naive transfer of
-Anny's face units onto GNM tore the lips and lids, so it is not shipped);
-with a GNM head, expressions come from GNM's own expression modes. GNM's
-pose correctives are not applied (as in gnm-maya's baked rigs).
+Limits: GNM's pose correctives are not applied (as in gnm-maya's baked
+rigs).
+
+## ARKit on the GNM head
+
+GNM has no ARKit rig, and copying Anny's face units across vertex by vertex
+tears the lips and eyelids, so `anny-maya/external/_arkit.py` builds the 52
+shapes from GNM itself, the way gnm-maya does:
+
+1. GNM's **semantic expression decoder** (a small Keras network shipped with
+   the pinned commit, read with h5py and run in numpy) gives a coefficient
+   vector for 20 named expressions (surprise, smile_wide, wink_left,
+   pucker…); the class mean (latent 0) is used, so the shapes are
+   deterministic.
+2. Each ARKit shape takes the right source (`eyeBlinkLeft` <- wink_left,
+   `mouthSmile*` <- smile_wide, `noseSneer*` <- snarl, `cheekPuff` <- blow…)
+   and keeps only its region: eye shapes keep just one eye region of GNM's
+   region-split basis; the rest are masked by GNM's painted regions (lips,
+   brows, orbits, cheeks, nose, chin) diffused over the mesh, and split
+   Left/Right with a soft midline.
+3. Shapes GNM has no class for are derived: a **jaw field** (how far each
+   vertex follows the chin when the mouth opens wide) separates upper and
+   lower lip for `mouthRoll*`, `mouthLowerDown*`, `mouthClose` and drives
+   `jawOpen/Left/Right/Forward`; `eyeLook*` rotate the eyeballs about GNM's
+   eye joints (15–22°).
+4. Every shape except the eye looks and the tongue is **projected back onto
+   GNM's expression basis** (ridge least squares), so whatever a mask did,
+   the result is a combination of modes learned from real scans — lips and
+   lids stay attached.
+
+The 52 deltas are computed once (~2 s) into `gnm_data/arkit_compiled_v1.npz`
+and added to GNM's bind pose (identity independent), so a slider and the
+baked target give the same mesh. Left/Right follow Anny's convention (the
+subject's own left). They are an approximation of ARKit, not a capture of
+it: `mouthClose` (meant for use with `jawOpen`) brings the lips most of the
+way together.
 
 ## Updating
 
@@ -220,8 +260,6 @@ the next panel open.
 
 ## Roadmap
 
-- ARKit-named face shapes for the GNM head (e.g. via GNM's semantic
-  expression decoders, as gnm-maya does), so the Face tab drives either head.
 - Hair / textures.
 
 ## Credits & licensing

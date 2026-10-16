@@ -37,7 +37,7 @@ def main():
     bootstrap.ensure_gnm(say)
   print("ready: runtime=%s data=%s compiled=%s" % (
       bootstrap.runtime_available(), bootstrap.data_available(),
-      bootstrap.compiled_available()), "gnm=%s" % bootstrap.gnm_available())
+      bootstrap.compiled_available()), "gnm=%s" % bootstrap.gnm_ready())
 
 
 if __name__ == "__main__":
