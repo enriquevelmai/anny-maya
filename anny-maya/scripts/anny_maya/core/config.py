@@ -24,6 +24,9 @@ GNM_ROOT = os.path.join(EXTERNAL_DIR, "gnm_data")
 GNM_PIN_FILE = os.path.join(EXTERNAL_DIR, "GNM_DATA.json")
 GNM_NPZ = os.path.join(GNM_ROOT, "gnm", "shape", "data", "versions", "v3_0",
                        "gnm_head.npz")
+# GNM's semantic expression decoder: source of the head's 52 ARKit shapes.
+GNM_DECODER = os.path.join(GNM_ROOT, "gnm", "shape", "data",
+                           "semantic_sampler", "expression_decoder_model.h5")
 
 
 def runtime_python() -> str:

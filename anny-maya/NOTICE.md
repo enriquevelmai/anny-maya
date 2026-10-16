@@ -48,7 +48,8 @@ model this tool loads (Apache-2.0 grants no trademark rights, §6).
 ## Google GNM head model (optional; downloaded unmodified when first used)
 
 When the GNM head is first switched on (Head tab), `external/gnm_data/` is
-populated with `gnm/shape/data/versions/v3_0/gnm_head.npz` plus `LICENSE`
+populated with `gnm/shape/data/versions/v3_0/gnm_head.npz`,
+`gnm/shape/data/semantic_sampler/expression_decoder_model.h5` plus `LICENSE`
 and the READMEs from [google/GNM](https://github.com/google/GNM) at the
 exact commit pinned in `external/GNM_DATA.json`
 (`9c9419f191edd68644ef5cb6572e238248e9a81c`), unmodified.
@@ -57,7 +58,10 @@ exact commit pinned in `external/GNM_DATA.json`
   Apache License 2.0 (https://github.com/google/GNM/blob/main/LICENSE).
   `external/_head.py` evaluates the model's bind pose with numpy following
   `gnm/shape/gnm_common.py` (a derivative of that Apache-2.0 code) and
-  attaches it to the Anny body.
+  attaches it to the Anny body. `external/_arkit.py` runs the expression
+  decoder's forward pass in numpy (following
+  `gnm/shape/semantic_sampler.py`, same licence) to derive the head's ARKit
+  shapes, cached as `gnm_data/arkit_compiled_v1.npz` on your machine.
 
 Not affiliated with, sponsored by, or endorsed by Google.
 
@@ -69,9 +73,12 @@ On first run, `runtime/` is populated with the module's own Python. On
 Agreement** (also at `runtime/LICENSE.txt` once downloaded). On
 **Linux/macOS** it is a venv created from the machine's own `python3`
 (nothing is redistributed). Its only dependency is **NumPy**
-(BSD-3-Clause). PyTorch is never installed.
+(BSD-3-Clause); switching on the GNM head also installs **h5py**
+(BSD-3-Clause), used once to read GNM's expression decoder. PyTorch is
+never installed.
 
 ## In-app license viewer
 
 **Anny ▸ Licenses…** lists this module's license plus every license actually
-installed on your machine (Anny, the CC0 assets, GNM, CPython, NumPy).
+installed on your machine (Anny, the CC0 assets, GNM, CPython, NumPy,
+h5py).

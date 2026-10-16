@@ -266,7 +266,11 @@ def _run():
     assert not p.body.state["rotations"] and not p.body.state["facial_actions"]
     if p.body.head_topology is not None:  # Head tab (GNM)
       p.gnm_chk.setChecked(True)
-      assert p.body.has_gnm_head and not p._face_frames[0].isEnabled()
+      assert p.body.has_gnm_head
+      assert p._face_frames[0].isEnabled() == p.body.gnm_arkit
+      if p.body.gnm_arkit:  # Face tab drives the GNM head
+        p._face_sliders["jawOpen"].spin.setValue(0.5)
+        assert p.body.state["facial_actions"]["jawOpen"] == 0.5
       p._gnm_sliders[("identity", 0)].spin.setValue(1.5)
       assert p.body.state["head"]["identity"][0] == 1.5
       p._gnm_sliders[("expression", 0)].spin.setValue(1.0)
@@ -310,7 +314,7 @@ def _head_checks(body, name):
   from maya import cmds as mc
   from anny_maya.services import bootstrap
   from anny_maya.scene import rig
-  if not bootstrap.gnm_available() or body.head_topology is None:
+  if not bootstrap.gnm_ready() or body.head_topology is None:
     print("[skip] GNM head data not installed (build_module.py --gnm)")
     return
   body.reset_all()
@@ -334,6 +338,23 @@ def _head_checks(body, name):
   assert body_moved < 1e-6 and head_moved > 0.1, (body_moved, head_moved)
   print("[ok] GNM identity moves the head (%.2f cm), body untouched" %
         head_moved)
+  assert body.gnm_arkit, "the GNM head has no ARKit shapes (h5py/decoder)"
+  for lab in ("jawOpen", "eyeBlinkLeft", "mouthSmileRight"):
+    before = _pts(name)
+    body.set_face(lab, 1.0)
+    after = _pts(name)
+    body_moved = max(abs(a - b) for a, b in zip(before[:3 * nb],
+                                                after[:3 * nb]))
+    moved = [i for i in range(nb, len(after) // 3)
+             if max(abs(after[3 * i + k] - before[3 * i + k])
+                    for k in range(3)) > 0.05]
+    assert body_moved < 1e-6 and len(moved) > 50, (lab, body_moved,
+                                                   len(moved))
+    ys = sorted(after[3 * i + 1] for i in moved)
+    print("[ok] ARKit %s drives the GNM head (%d verts, %.1f..%.1f cm high)"
+          % (lab, len(moved), ys[0], ys[-1]))
+  body.set_face("jawOpen", 0.6)
+  body.set_face("mouthSmileRight", 0.0)
   body.randomize_gnm("expression", scale=0.5, seed=2)
   body.set_rotation("head", 1, 35.0)
   body.set_rotation("neck02", 0, 15.0)
@@ -342,6 +363,7 @@ def _head_checks(body, name):
   info = rig.rig_info(rigged)
   aliases = mc.aliasAttr(info["blendShape"], query=True)[::2]
   assert "gnmExpression" in aliases and "lower_face_region_000" in aliases
+  assert all(l in aliases for l in body.face_labels), "ARKit targets missing"
   err = _max_diff(_pts(rigged), _pts(name))
   assert err < 1e-2, "GNM-head rig deviates by %.4f cm" % err
   print("[ok] GNM-head rig (one skinCluster, %d face targets) matches the "

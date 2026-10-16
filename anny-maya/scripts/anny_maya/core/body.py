@@ -119,6 +119,9 @@ class AnnyBody(object):
     self.gnm_expression_dim = hm.get("expression_dim", 383)
     self.gnm_identity_groups = hm.get("identity_groups", [])
     self.gnm_expression_groups = hm.get("expression_groups", [])
+    # The 52 ARKit actions also drive the GNM head (needs h5py + GNM's
+    # expression decoder, installed with the GNM data).
+    self.gnm_arkit = bool(hm.get("arkit"))
     # left_eye_region_k <-> right_eye_region_k (expression symmetry)
     names = {}
     for label, start, end in self.gnm_expression_groups:
@@ -460,7 +463,8 @@ class AnnyBody(object):
     if on and not self.state.get("head"):
       self.state["head"] = default_head(self.gnm_identity_dim,
                                         self.gnm_expression_dim)
-      self.state["facial_actions"] = {}  # ARKit units live on Anny's head
+      if not self.gnm_arkit:  # this install can't put them on the GNM head
+        self.state["facial_actions"] = {}
     elif not on:
       self.state["head"] = None
     if update:

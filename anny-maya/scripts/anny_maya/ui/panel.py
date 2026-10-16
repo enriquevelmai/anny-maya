@@ -92,7 +92,8 @@ INFO = (
     "• Create — phenotypes (gender, age, muscle, weight, height, "
     "proportions). Randomize draws a plausible body.\n"
     "• Body — 250+ local MakeHuman changes by region (-1..1).\n"
-    "• Face — the 52 ARKit facial actions (Face Units, 0..1).\n"
+    "• Face — the 52 ARKit facial actions (0..1), on Anny's head or on "
+    "the GNM head.\n"
     "• Head — swap in a Google GNM head (identity + expression), stitched "
     "at the neck and skinned to the same skeleton; import gnm-maya faces.\n"
     "• Pose — per-bone rotations about Maya's world axes at the neutral "
@@ -519,8 +520,8 @@ class AnnyPanel(QtWidgets.QWidget):
                             "expression (all units 0).", self._reset_face))
     v.addLayout(row)
     self.face_note = QtWidgets.QLabel(
-        "This body uses a GNM head: the 52 ARKit actions belong to Anny's own "
-        "head. Shape the GNM face in the Head tab (Expression).")
+        "The ARKit actions on the GNM head need a GNM data update: in the "
+        "Head tab, turn Use GNM head off and on again.")
     self.face_note.setWordWrap(True)
     self.face_note.setVisible(False)
     v.addWidget(self.face_note)
@@ -646,16 +647,17 @@ class AnnyPanel(QtWidgets.QWidget):
     self.gnm_chk.setChecked(on)
     self.gnm_chk.blockSignals(False)
     self._head_controls.setEnabled(on)
-    self.face_note.setVisible(on)
+    face_ok = not on or self.body.gnm_arkit
+    self.face_note.setVisible(not face_ok)
     for f in self._face_frames:
-      f.setEnabled(not on)
+      f.setEnabled(face_ok)
     for i in range(self._face_row.count()):
       w = self._face_row.itemAt(i).widget()
       if w is not None:
-        w.setEnabled(not on)
+        w.setEnabled(face_ok)
     if hasattr(self, "bake_modes_spin"):
       self.bake_modes_spin.setEnabled(on)
-      self.bake_face_chk.setText("GNM expression" if on
+      self.bake_face_chk.setText("52 ARKit + GNM expression" if on
                                  else "52 ARKit face shapes")
     if not on:
       return
@@ -671,11 +673,12 @@ class AnnyPanel(QtWidgets.QWidget):
     from anny_maya.services import bootstrap
     try:
       self._refresh_timer.stop()
-      if on and not bootstrap.gnm_available():
+      if on and not bootstrap.gnm_ready():
         if not bootstrap.ensure_gnm_with_dialog():
           self._sync_head()
           return
-      if on and self.body.head_topology is None:
+      if on and (self.body.head_topology is None
+                 or not self.body.gnm_arkit):
         # The worker started before GNM was installed: restart it.
         from anny_maya.core import worker as _worker
         _worker.shutdown_worker()
