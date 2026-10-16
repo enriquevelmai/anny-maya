@@ -1,7 +1,21 @@
+# Python bytecode
 __pycache__/
 *.py[cod]
-runtime/
-venv/
+
+# Downloaded / generated on first run inside the module folder — never
+# committed (Anny's data is fetched from the pinned naver/anny release).
+anny-maya/runtime/
+anny-maya/venv/
+anny-maya/external/anny_data/
+
+# Dev-only validation environment and fixtures (official anny + torch)
 .devvenv/
-external/anny_repo/
+anny-maya/_fixtures/
+
+# Tinted PNG icons rasterised from the bundled SVGs on demand
+anny-maya/scripts/anny_maya/ui/_icons/_cache/
+
+# Scratch
 _cache/
+_out*/
+_sess*/
