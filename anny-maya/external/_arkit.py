@@ -38,7 +38,7 @@ import re
 
 import numpy as np
 
-ARKIT_COMPILED_VERSION = 1
+ARKIT_COMPILED_VERSION = 2  # 2: eyeBlink calibrated to close the eye
 ARKIT_COMPILED_NAME = "arkit_compiled_v%d.npz" % ARKIT_COMPILED_VERSION
 DECODER_REL = os.path.join("gnm", "shape", "data", "semantic_sampler",
                            "expression_decoder_model.h5")
@@ -55,6 +55,10 @@ LATENT_DIM = 64
 # Eye looks: eyeball rotation (degrees) at weight 1.
 LOOK_DEG = {"Up": 15.0, "Down": 20.0, "In": 22.0, "Out": 22.0}
 PROJECT_LAMBDA = 1e-3
+# eyeBlink is calibrated to close the template's eye; this margin closes it
+# on other identities too (20 random faces: eyeball visible 0.3% mean,
+# 1.8% max, versus 3.8% / 12.4% without it).
+BLINK_MARGIN = 1.15
 
 
 # --- the decoder (numpy forward pass over the Keras weights) -------------------
@@ -350,7 +354,77 @@ def compile_arkit(gnm, decoder_path, labels):
     for l in out:
       if not l.startswith("eyeLook") and l != "tongueOut":
         out[l] = P(out[l])
+  # ARKit eyeBlink = 1 means a CLOSED eye. GNM's wink class mean leaves a
+  # slit, so scale each blink until the eyeball no longer shows from the
+  # front (measured on the template; the deltas are identity-independent).
+  for s in ("Left", "Right"):
+    key = "eyeBlink" + s
+    if key in out:
+      out[key] = out[key] * (blink_gain(gnm, out[key], s) * BLINK_MARGIN)
   return np.stack([out[l] for l in labels]).astype(np.float32)
+
+
+def visible_eyeball(gnm, verts, side, res=0.00025):
+  """Front-view pixels (res metres) where the eyeball is the nearest
+  surface, inside a box around that eye - an orthographic z-buffer over
+  the quads near the eye."""
+  ej = gnm.joint_template[gnm.joint_names.index(
+      "left_eye" if side == "Left" else "right_eye")]
+  ball = gnm.group("left_eye" if side == "Left" else "right_eye") > 0.5
+  lo = ej[:2] - np.array([0.025, 0.02])
+  hi = ej[:2] + np.array([0.025, 0.02])
+  q = gnm.quads
+  c = verts[q][:, :, :2].mean(axis=1)
+  near = np.all((c > lo) & (c < hi), axis=1) & (verts[q][:, :, 2].mean(1)
+                                                > ej[2] - 0.005)
+  w, h = (int(np.ceil((hi - lo)[k] / res)) for k in (0, 1))
+  zb = np.full((h, w), -np.inf)
+  lab = np.zeros((h, w), bool)
+  for quad in q[near]:
+    is_ball = bool(ball[quad].all())
+    for tri in ((quad[0], quad[1], quad[2]), (quad[0], quad[2], quad[3])):
+      p = verts[list(tri)]
+      xs = (p[:, 0] - lo[0]) / res
+      ys = (p[:, 1] - lo[1]) / res
+      x0, x1 = max(int(xs.min()), 0), min(int(xs.max()) + 1, w)
+      y0, y1 = max(int(ys.min()), 0), min(int(ys.max()) + 1, h)
+      if x0 >= x1 or y0 >= y1:
+        continue
+      d = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (ys[1] - ys[0])
+      if abs(d) < 1e-12:
+        continue
+      gx, gy = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+      w1 = ((gx - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (gy - ys[0])) / d
+      w2 = ((xs[1] - xs[0]) * (gy - ys[0]) - (gx - xs[0]) * (ys[1] - ys[0])) / d
+      w0 = 1 - w1 - w2
+      inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
+      z = w0 * p[0, 2] + w1 * p[1, 2] + w2 * p[2, 2]
+      reg = zb[y0:y1, x0:x1]
+      upd = inside & (z > reg)
+      reg[upd] = z[upd]
+      lab[y0:y1, x0:x1][upd] = is_ball
+  return int(lab.sum())
+
+
+def blink_gain(gnm, delta, side, max_gain=3.0, tol=0.01):
+  """Smallest gain (>= 1) at which <= ``tol`` of the open eyeball shows."""
+  T = gnm.template
+  open_px = visible_eyeball(gnm, T, side)
+  if open_px == 0:
+    return 1.0
+  shown = lambda g: visible_eyeball(gnm, T + g * delta, side) / open_px
+  if shown(1.0) <= tol:
+    return 1.0
+  if shown(max_gain) > tol:
+    return max_gain
+  a, b = 1.0, max_gain
+  for _ in range(10):
+    m = 0.5 * (a + b)
+    if shown(m) <= tol:
+      b = m
+    else:
+      a = m
+  return b
 
 
 class _Projector(object):
