@@ -1,0 +1,21 @@
+{
+  "repo": "naver/anny",
+  "tag": "v0.6.1",
+  "sha": "d6fc027ced5c17b6b0775dee944096ade7a9ef80",
+  "zip_url": "https://github.com/naver/anny/archive/d6fc027ced5c17b6b0775dee944096ade7a9ef80.zip",
+  "approx_mb": 48,
+  "extract": [
+    "LICENSE",
+    "README.md",
+    "src/anny/data/mpfb2/LICENSE.md",
+    "src/anny/data/mpfb2/3dobjs/",
+    "src/anny/data/mpfb2/targets/",
+    "src/anny/data/mpfb2/rigs/standard/rig.default.json",
+    "src/anny/data/mpfb2/rigs/standard/weights.default.json",
+    "src/anny/data/faceunits01/",
+    "src/anny/data/cached/anny.pth"
+  ],
+  "skip": [
+    "src/anny/data/mpfb2/targets/_images/"
+  ]
+}
