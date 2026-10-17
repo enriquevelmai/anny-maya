@@ -1,3 +1,10 @@
+# Copyright 2026 Enrique Velasco Mairal
+# The expression decoder forward pass and class order follow
+# gnm/shape/semantic_sampler.py of Google GNM (https://github.com/google/GNM),
+# Copyright 2026 Google LLC, licensed under the Apache License, Version 2.0.
+# Modified: re-implemented in numpy and used to build ARKit-named shapes.
+# "ARKit" is a trademark of Apple Inc.; only the blendshape names are used.
+# SPDX-License-Identifier: Apache-2.0
 """The 52 ARKit facial actions on the Google GNM head (numpy + h5py).
 
 GNM has no ARKit rig. What it does ship (pinned google/GNM commit) is:

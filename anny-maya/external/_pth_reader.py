@@ -1,3 +1,5 @@
+# Copyright 2026 Enrique Velasco Mairal
+# SPDX-License-Identifier: Apache-2.0
 """Torch-free reader for PyTorch ``.pth`` zip checkpoints (numpy only).
 
 A modern ``torch.save`` file is a zip holding ``<name>/data.pkl`` (a pickle

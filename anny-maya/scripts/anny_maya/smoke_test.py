@@ -70,6 +70,7 @@ def _run():
 
   assert bootstrap.all_available() or bootstrap.ensure_all_with_dialog(), \
       "first-run setup failed"
+  _usersetup_check()
   mc.file(new=True, force=True)
 
   t = time.time()
@@ -291,6 +292,44 @@ def _run():
 
   worker.shutdown_worker()
   print("SMOKE TEST PASSED")
+
+
+def _usersetup_check():
+  """Maya execs every userSetup.py in ONE shared namespace: ours must not
+  leave names there (gnm-maya's userSetup defines _item/build_menu too, and
+  the clash once put the Anny menu items inside the GNM menu)."""
+  import os
+  import maya.utils
+  from anny_maya.core import config
+  path = os.path.join(config.MODULE_ROOT, "scripts", "userSetup.py")
+  queued = []
+  real = maya.utils.executeDeferred
+  maya.utils.executeDeferred = lambda fn, *a, **k: queued.append(fn)
+  try:
+    other_tool = ("def _item(*a, **k): raise AssertionError('wrong _item')\n"
+                  "def build_menu(): raise AssertionError('wrong menu')\n"
+                  "_MENU = 'otherMenu'\n")
+    ns = {"__name__": "__main__"}
+    exec(other_tool, ns)
+    before = set(ns)
+    with open(path) as f:
+      exec(compile(f.read(), path, "exec"), ns)
+    exec(other_tool, ns)  # and another tool loading after ours
+    assert set(ns) == before, "userSetup.py leaked %s" % (set(ns) - before)
+    assert len(queued) == 1
+    from anny_maya.ui import menu
+    called = []
+    orig = menu.build
+    menu.build = lambda: called.append(1)
+    try:
+      queued[0]()
+    finally:
+      menu.build = orig
+    assert called, "the deferred callback did not build the Anny menu"
+  finally:
+    maya.utils.executeDeferred = real
+  print("[ok] userSetup.py is isolated from other tools' userSetup.py "
+        "(menu built by anny_maya.ui.menu)")
 
 
 def _boundary_vertices(name):

@@ -65,6 +65,23 @@ exact commit pinned in `external/GNM_DATA.json`
 
 Not affiliated with, sponsored by, or endorsed by Google.
 
+## Modified files (Apache-2.0 section 4)
+
+These files of this repository are derivative works of the Apache-2.0 code
+above, re-implemented by Enrique Velasco Mairal; each carries the original
+copyright and a notice of the changes in its header:
+
+- `external/_anny_core.py` - numpy port of NAVER Anny's model construction
+  and evaluation.
+- `external/_head.py` - GNM bind-pose evaluation (after Google GNM's
+  `gnm_common.py`) plus the Anny attachment.
+- `external/_arkit.py` - GNM expression-decoder forward pass (after Google
+  GNM's `semantic_sampler.py`) and the ARKit-named shapes built from it.
+
+"ARKit" is a trademark of Apple Inc.; anny-maya only uses the standard
+blendshape names (eyeBlinkLeft, jawOpen, ...) to describe its face shapes and
+is not affiliated with Apple.
+
 ## Bundled Python runtime (set up on first run)
 
 On first run, `runtime/` is populated with the module's own Python. On

@@ -17,7 +17,7 @@ import logging as _logging
 __all__ = ["show_ui", "create_body", "show_licenses", "add_shelf_button",
            "check_tool_updates", "run_gui_test", "reload_package", "logger"]
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 
 def _configure_logger():
@@ -49,17 +49,17 @@ def _disk_version():
 
 
 def reload_package():
-  """Drop every anny_maya submodule (and userSetup) from sys.modules so the
-  next import loads the code on disk - used after a tool update instead of
-  a Maya restart."""
+  """Drop every anny_maya submodule from sys.modules so the next import
+  loads the code on disk - used after a tool update instead of a Maya
+  restart - then rebuild the Anny menu from the new code. (Never imports
+  a module called 'userSetup': other tools ship one too.)"""
   import sys
   for name in list(sys.modules):
-    if name == "anny_maya" or name.startswith("anny_maya.") \
-        or name == "userSetup":
+    if name == "anny_maya" or name.startswith("anny_maya."):
       del sys.modules[name]
   try:
-    import userSetup
-    userSetup.build_menu()
+    from anny_maya.ui import menu
+    menu.build()
   except Exception:
     pass
 

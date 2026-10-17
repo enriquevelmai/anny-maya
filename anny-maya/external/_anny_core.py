@@ -1,3 +1,9 @@
+# Copyright 2026 Enrique Velasco Mairal
+# Derived from Anny (https://github.com/naver/anny),
+# Copyright (C) 2025 NAVER Corp., licensed under the Apache License, Version
+# 2.0. Modified: model construction and evaluation re-implemented in numpy
+# (no PyTorch) for the ``anny`` rig and ``anny-quads`` topology.
+# SPDX-License-Identifier: Apache-2.0
 """Numpy port of NAVER's Anny body model (rig ``anny``, topology ``anny-quads``).
 
 Reproduces ``anny.Anny(rig="anny", topology="anny-quads",

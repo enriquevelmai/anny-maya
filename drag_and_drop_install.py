@@ -139,9 +139,9 @@ def onMayaDroppedPythonFile(*args):
       if name == "anny_maya" or name.startswith("anny_maya."):
         del sys.modules[name]
     import anny_maya  # noqa: F401
-    user_setup = importlib.import_module("userSetup")
-    importlib.reload(user_setup)
-    user_setup.build_menu()
+    # The menu code lives in the package: other tools ship a userSetup.py
+    # too, so importing "userSetup" by name could load theirs.
+    importlib.import_module("anny_maya.ui.menu").build()
     try:
       anny_maya.add_shelf_button()
     except Exception:

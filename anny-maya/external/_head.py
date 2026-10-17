@@ -1,3 +1,9 @@
+# Copyright 2026 Enrique Velasco Mairal
+# The GNM bind-pose evaluation follows gnm/shape/gnm_common.py of Google GNM
+# (https://github.com/google/GNM), Copyright 2026 Google LLC, licensed under
+# the Apache License, Version 2.0. Modified: re-implemented in numpy and
+# extended to attach the head to the NAVER Anny body.
+# SPDX-License-Identifier: Apache-2.0
 """Phase 2: a Google GNM head on the Anny body (numpy only).
 
 GNM (github.com/google/GNM, Apache-2.0) is a 3D morphable head model: a
