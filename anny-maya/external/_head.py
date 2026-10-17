@@ -37,7 +37,7 @@ import os
 
 import numpy as np
 
-HEAD_COMPILED_VERSION = 1
+HEAD_COMPILED_VERSION = 3  # 3: radial surface blend of the neck onto Anny
 HEAD_COMPILED_NAME = "head_compiled_v%d.npz" % HEAD_COMPILED_VERSION
 GNM_NPZ_REL = os.path.join("gnm", "shape", "data", "versions", "v3_0",
                            "gnm_head.npz")
@@ -47,6 +47,7 @@ GNM_PART = {"skin": "gnm_skin", "left_eye": "gnm_eye_l",
             "right_eye": "gnm_eye_r", "upper_teeth_and_gums": "gnm_teeth",
             "lower_teeth_and_gums": "gnm_teeth", "tongue": "gnm_tongue"}
 CONFORM_RINGS = 60       # GNM rings (above the cut) eligible for the neck blend
+SURFACE_MATCH_MAX = 0.02  # m, see _surface_correspondence
 NAPE_BLEND = 0.08        # metres of neck blend at the back (front: to chin)
 UV_TILE_OFFSET = 1.0     # GNM UVs live in the next UDIM tile (u + 1)
 
@@ -466,7 +467,55 @@ def compile_attachment(anny, gnm):
       gnm_weights=gw,
       ring_k=np.asarray(ring_k),
       chin_v=chin_v.astype(np.int64),
+      **_surface_correspondence(rv, body_faces, frame, G, conform_v),
   )
+
+
+def _surface_correspondence(rv, body_faces, frame, G, verts):
+  """For each GNM neck vertex, the point of Anny's ORIGINAL neck/nape
+  surface (hidden head faces included) hit by a ray from the neck axis
+  through that vertex, as (triangle, barycentrics) on Anny's mesh, so it
+  follows any body shape at runtime. Neutral shapes; computed once."""
+  tris = np.concatenate([body_faces[:, [0, 1, 2]], body_faces[:, [0, 2, 3]]])
+  P = G[verts]
+  h = frame.height(P)
+  th = frame.height(rv[tris])
+  near = (th.max(axis=1) > h.min() - 0.03) & (th.min(axis=1) < h.max() + 0.03)
+  tris = tris[near]
+  v0, v1, v2 = rv[tris[:, 0]], rv[tris[:, 1]], rv[tris[:, 2]]
+  e1, e2 = v1 - v0, v2 - v0
+  origin = frame.o + h[:, None] * frame.axis
+  d = P - origin
+  d /= np.linalg.norm(d, axis=1, keepdims=True) + 1e-12
+  tri_out = np.zeros((len(P), 3), np.int64)
+  bary_out = np.zeros((len(P), 3))
+  ok = np.zeros(len(P), bool)
+  for s in range(0, len(P), 256):
+    o, dd = origin[s:s + 256], d[s:s + 256]
+    pv = np.cross(dd[:, None, :], e2[None])                 # (r, t, 3)
+    det = np.einsum("tk,rtk->rt", e1, pv)
+    inv = 1.0 / np.where(np.abs(det) < 1e-12, np.nan, det)
+    tv = o[:, None, :] - v0[None]
+    u = np.einsum("rtk,rtk->rt", tv, pv) * inv
+    qv = np.cross(tv, e1[None])
+    w = np.einsum("rk,rtk->rt", dd, qv) * inv
+    t = np.einsum("tk,rtk->rt", e2, qv) * inv
+    hit = (u >= 0) & (w >= 0) & (u + w <= 1) & (t > 1e-6)
+    t = np.where(hit, t, np.inf)
+    j = np.argmin(t, axis=1)                                # first hit
+    good = np.isfinite(t[np.arange(len(j)), j])
+    rows = np.arange(len(j))
+    tri_out[s:s + 256] = tris[j]
+    bu, bw = u[rows, j], w[rows, j]
+    bary_out[s:s + 256] = np.stack([1 - bu - bw, bu, bw], axis=1)
+    ok[s:s + 256] = good
+  # Trust only correspondences where the two necks nearly coincide on the
+  # neutral shapes (tube-like neck): under the chin the ray can hit an
+  # unrelated part of Anny's jaw.
+  hit_p = np.einsum("nk,nkc->nc", bary_out, rv[tri_out])
+  ok &= np.linalg.norm(hit_p - P, axis=1) < SURFACE_MATCH_MAX
+  bary_out[~ok] = 0.0
+  return {"surf_tri": tri_out, "surf_bary": bary_out, "surf_ok": ok}
 
 
 def _ccw(loop, theta):
@@ -560,6 +609,10 @@ class HeadAttachment(object):
     self.loop_g = c["loop_g"]
     self.conform_v = c["conform_v"]
     self.chin_v = c["chin_v"]
+    self.surf_tri = c["surf_tri"]
+    self.surf_bary = c["surf_bary"]
+    self.surf_ok = c["surf_ok"]
+    self._ring = np.isin(self.conform_v, self.loop_g)
     self.weights = np.concatenate([anny.weights[self.anny_used],
                                    c["gnm_weights"]])
     self.num_vertices = len(self.anny_used) + len(self.gnm_used)
@@ -632,7 +685,25 @@ class HeadAttachment(object):
     ang = frame.angle(G[cv])
     span_v = span_f + (span_b - span_f) * 0.5 * (1.0 - np.cos(ang))
     t = np.clip((h0 + span_v - h) / span_v, 0.0, 1.0)
-    return (t * t * (3 - 2 * t))[:, None] * dv
+    w = t * t * (3 - 2 * t)
+    d1 = w[:, None] * dv
+    # Surface blend: near the cut the GNM neck takes Anny's own neck/nape
+    # surface (shape AND slope), fading to GNM's shape up the blend span -
+    # a translation alone kept GNM's slope and left a ledge on wide necks.
+    # The cut ring itself stays exactly on Anny's loop (d1).
+    A = np.einsum("nk,nkc->nc", self.surf_bary, rest_v[self.surf_tri])
+    ws = w * self.surf_ok * ~self._ring
+    G1 = G[cv] + d1
+    # Radial only (same angle and height about the neck axis): the radius
+    # goes to Anny's, the vertex never slides along the surface.
+    def radial(p):
+      d = p - frame.o
+      d = d - np.outer(d @ frame.axis, frame.axis)
+      r = np.linalg.norm(d, axis=1)
+      return d / np.maximum(r, 1e-9)[:, None], r
+    u, r1 = radial(G1)
+    _ua, ra = radial(A)
+    return d1 + (ws * (ra - r1))[:, None] * u
 
   def rest_vertices(self, rest_v, rest_p, identity=None, expression=None,
                     fit=None, face=None):

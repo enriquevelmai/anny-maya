@@ -17,7 +17,7 @@ import logging as _logging
 __all__ = ["show_ui", "create_body", "show_licenses", "add_shelf_button",
            "check_tool_updates", "run_gui_test", "reload_package", "logger"]
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 
 def _configure_logger():
